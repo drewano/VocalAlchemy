@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POC Pipeline d'Analyse Audio</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>POC Pipeline d'Analyse Audio</h1>
+            <p>Transcription et analyse automatique de vos fichiers audio</p>
+        </header>
+
+        <main>
+            <section class="upload-section">
+                <h2>Sélectionnez un fichier audio</h2>
+                <form id="upload-form" enctype="multipart/form-data">
+                    <div class="file-input-wrapper">
+                        <input type="file" id="audio-file" name="file" accept="audio/*" required>
+                        <label for="audio-file" class="file-input-label">
+                            <span>Choisir un fichier</span>
+                        </label>
+                        <span id="file-name" class="file-name">Aucun fichier sélectionné</span>
+                    </div>
+                    <button type="submit" id="process-btn">Lancer l'analyse</button>
+                </form>
+            </section>
+
+            <section class="status-section" id="status-section" style="display: none;">
+                <h2>Statut du traitement</h2>
+                <div class="status-indicator">
+                    <div class="spinner"></div>
+                    <p id="status-message">Traitement en cours...</p>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress" id="progress"></div>
+                </div>
+            </section>
+
+            <section class="result-section" id="result-section" style="display: none;">
+                <h2>Résultat de l'analyse</h2>
+                <div id="analysis-result"></div>
+                <button id="download-btn" style="display: none;">Télécharger le rapport</button>
+            </section>
+        </main>
+
+        <footer>
+            <p>POC Pipeline d'Analyse Audio © 2025</p>
+        </footer>
+    </div>
+
+    <script src="/static/js/script.js"></script>
+</body>
+</html>

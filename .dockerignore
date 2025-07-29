@@ -1,0 +1,32 @@
+# .dockerignore
+
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Environnements virtuels
+.venv/
+venv/
+env/
+ENV/
+
+# Fichiers de cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Fichiers d'environnement (seront injectés à l'exécution)
+.env
+.env.example
+
+# Répertoires générés par l'application
+# On ne veut pas copier les uploads locaux dans l'image
+uploads/
+
+# Fichiers d'IDE
+.idea/
+.vscode/
