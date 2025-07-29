@@ -2,19 +2,21 @@ import os
 import uuid
 from functools import partial
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from src.core.pipeline import run_full_pipeline
 
 # Initialize FastAPI app
 app = FastAPI(title="POC Audio Analysis Pipeline")
 
-# Mount static files directory
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Configure templates
-templates = Jinja2Templates(directory="templates")
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # Vite's default development server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Global dictionary to store task states
 TASKS = {}
@@ -33,14 +35,6 @@ def update_status(task_id: str, status: str, result_path: str = None):
         TASKS[task_id]["status"] = status
         if result_path:
             TASKS[task_id]["result_path"] = result_path
-
-
-@app.get("/")
-async def read_root():
-    """
-    Serve the main index.html template.
-    """
-    return templates.TemplateResponse("index.html", {"request": {}})
 
 
 @app.post("/process-audio/")

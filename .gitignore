@@ -40,5 +40,5 @@ Thumbs.db
 
 # Project specific
 uploads/
-prompt
+prompt.xml
 repomix-output.xml
