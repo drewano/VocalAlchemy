@@ -3,10 +3,12 @@ import axios from 'axios';
 import FileUpload from './components/FileUpload';
 import StatusDisplay from './components/StatusDisplay';
 import ResultDisplay from './components/ResultDisplay';
+import PromptSelection from './components/PromptSelection';
 import './App.css';
 
 function App() {
   const [file, setFile] = useState(null);
+  const [prompt, setPrompt] = useState('');
   const [status, setStatus] = useState('');
   const [result, setResult] = useState(null);
   const [taskId, setTaskId] = useState(null);
@@ -26,6 +28,7 @@ function App() {
 
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('prompt', prompt);
 
     try {
       const response = await axios.post('/api/process-audio/', formData, {
@@ -100,12 +103,23 @@ function App() {
         ) : isLoading ? (
           <StatusDisplay status={status} />
         ) : (
-          <FileUpload 
-            onFileSelect={handleFileSelect} 
-            onSubmit={handleSubmit} 
-            isLoading={isLoading} 
-            file={file} 
-          />
+          <>
+            <FileUpload 
+              onFileSelect={handleFileSelect} 
+              file={file} 
+            />
+            <PromptSelection 
+              prompt={prompt}
+              setPrompt={setPrompt}
+            />
+            <button 
+              onClick={handleSubmit}
+              disabled={isLoading || !file}
+              className="submit-button"
+            >
+              {isLoading ? 'Processing...' : 'Lancer l\'analyse'}
+            </button>
+          </>
         )}
       </main>
       

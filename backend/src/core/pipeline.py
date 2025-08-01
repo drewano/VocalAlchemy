@@ -4,7 +4,7 @@ from src.core.audio_splitter import split_audio
 from src.core.gladia_client import transcribe_audio_chunk
 from src.core.ai_processor import analyze_transcript
 
-def run_full_pipeline(source_path: str, base_output_dir: str, update_status_callback: callable) -> str:
+def run_full_pipeline(source_path: str, base_output_dir: str, update_status_callback: callable, user_prompt: str = None) -> str:
     """
     Run the full audio processing pipeline: split, transcribe, and analyze.
     
@@ -12,6 +12,7 @@ def run_full_pipeline(source_path: str, base_output_dir: str, update_status_call
         source_path (str): Path to the source audio file
         base_output_dir (str): Base directory for output files
         update_status_callback (callable): Function to call with status updates
+        user_prompt (str, optional): Custom prompt for the AI analysis
         
     Returns:
         str: Path to the final report file
@@ -56,9 +57,14 @@ def run_full_pipeline(source_path: str, base_output_dir: str, update_status_call
     # Step 4: Concatenate all transcriptions
     full_text = "\n".join(transcriptions)
     
+    # Save the raw transcription to a file
+    transcript_path = os.path.join(base_output_dir, "transcription.txt")
+    with open(transcript_path, "w", encoding="utf-8") as f:
+        f.write(full_text)
+    
     # Step 5: Update status and analyze transcription
     update_status_callback("Analyse de la transcription par l'IA...")
-    analysis_result = analyze_transcript(full_text)
+    analysis_result = analyze_transcript(full_text, user_prompt)
     
     # Step 6: Save the final report
     report_path = os.path.join(base_output_dir, "report.txt")
@@ -66,7 +72,7 @@ def run_full_pipeline(source_path: str, base_output_dir: str, update_status_call
         f.write(analysis_result)
     
     # Step 7: Update status and clean up temporary files
-    update_status_callback("Terminé", result_path=report_path)
+    update_status_callback("Terminé", result_path=report_path, transcript_path=transcript_path)
     
     # Clean up temporary segments
     if os.path.exists(segments_dir):

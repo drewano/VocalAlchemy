@@ -42,3 +42,4 @@ Thumbs.db
 uploads/
 prompt.xml
 repomix-output.xml
+.qwen/
