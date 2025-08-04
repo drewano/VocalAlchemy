@@ -175,7 +175,7 @@ const DashboardPage: React.FC = () => {
                 </TableHeader>
                 <TableBody>
                   {history.map((item) => (
-                    <TableRow key={item.id} className="cursor-pointer hover:bg-muted/40" onClick={() => window.open(`/api/result/${item.id}`, '_blank')}>
+                    <TableRow key={item.id} className="cursor-pointer hover:bg-muted/40" onClick={() => navigate(`/analysis/${item.id}`)}>
                       <TableCell className="font-medium">{item.filename}</TableCell>
                       <TableCell>{item.date}</TableCell>
                       <TableCell>

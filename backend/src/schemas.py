@@ -14,14 +14,32 @@ class User(BaseModel):
     class Config:
         from_attributes = True
 
-# Analysis schemas
-class Analysis(BaseModel):
+# Analysis Version schema
+class AnalysisVersion(BaseModel):
     id: str
-    status: str
+    prompt_used: str
     created_at: datetime
+    people_involved: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+# Analysis schemas
+class AnalysisSummary(BaseModel):
+    id: str
+    status: str
+    created_at: datetime
+    filename: str
+
+    class Config:
+        from_attributes = True
+
+class AnalysisDetail(AnalysisSummary):
+    prompt: Optional[str]
+    transcript: str
+    latest_analysis: Optional[str]
+    versions: list[AnalysisVersion]
+    people_involved: Optional[str]
 
 # Token schemas
 class Token(BaseModel):

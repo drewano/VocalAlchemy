@@ -6,6 +6,7 @@ import SignupPage from './pages/SignupPage';
 import DashboardPage from './pages/DashboardPage';
 import ProfilePage from './pages/ProfilePage';
 import ProtectedRoute from './routes/ProtectedRoute';
+import AnalysisDetailPage from './pages/AnalysisDetailPage';
 
 const router = createBrowserRouter([
   {
@@ -43,6 +44,14 @@ const router = createBrowserRouter([
             <DashboardPage />
           </ProtectedRoute>
         ), // Page d'analyse (protégée) - Pour l'instant, on utilise le même composant
+      },
+      {
+        path: 'analysis/:analysisId',
+        element: (
+          <ProtectedRoute>
+            <AnalysisDetailPage />
+          </ProtectedRoute>
+        ),
       },
       // Ajoutez d'autres routes ici
     ],

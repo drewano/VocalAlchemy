@@ -6,7 +6,8 @@ DEFAULT_SYSTEM_PROMPT = (
     "Tu es un assistant de synthèse expert. Voici la transcription d'une réunion. "
     "Analyse-la et fournis un résumé concis suivi d'une liste de points d'action "
     "(actions à réaliser, décisions prises) avec les personnes concernées si mentionnées. "
-    "Le format de sortie doit être en Markdown."
+    "Le format de sortie doit être en Markdown. "
+    "À la fin de ta réponse, ajoute une section distincte intitulée '### Personnes Concernées' et liste, en utilisant des puces, les noms des personnes mentionnées dans la transcription en lien avec des actions ou des décisions."
 )
 
 
@@ -40,7 +41,9 @@ def analyze_transcript(full_transcript: str, user_prompt: str = None) -> str:
         model = genai.GenerativeModel('gemini-2.5-flash')
         
         # Use user_prompt if provided and not empty, otherwise use default
-        system_prompt = user_prompt if user_prompt and user_prompt.strip() else DEFAULT_SYSTEM_PROMPT
+        base_prompt = user_prompt if user_prompt and user_prompt.strip() else DEFAULT_SYSTEM_PROMPT
+        instruction = " À la fin de ta réponse, ajoute une section distincte intitulée '### Personnes Concernées' et liste, en utilisant des puces, les noms des personnes mentionnées dans la transcription en lien avec des actions ou des décisions."
+        system_prompt = f"{base_prompt}{instruction}" if (user_prompt and user_prompt.strip()) else base_prompt
         
         # Combine the system prompt with the transcript
         prompt = f"{system_prompt}\n\nTranscription:\n{full_transcript}"

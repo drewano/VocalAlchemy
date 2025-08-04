@@ -74,15 +74,45 @@ export async function getResultFile(taskId: string, type: 'result' | 'transcript
 }
 
 export type AnalysisSummary = { id: string; status: string; created_at: string; filename: string };
-export type AnalysisDetail = AnalysisSummary & { has_result: boolean; has_transcript: boolean };
+
+export interface AnalysisVersion {
+  id: string;
+  prompt_used: string;
+  created_at: string;
+  people_involved: string | null;
+}
+
+export interface AnalysisDetail {
+  id: string;
+  status: string;
+  created_at: string;
+  filename: string;
+  prompt: string | null;
+  transcript: string;
+  latest_analysis: string | null;
+  versions: AnalysisVersion[];
+  people_involved: string | null;
+}
 
 export async function listAnalyses(): Promise<AnalysisSummary[]> {
   const res = await api.get('/analysis/list');
   return res.data;
 }
 
-export async function getAnalysis(taskId: string): Promise<AnalysisDetail> {
+export async function getAnalysisDetail(taskId: string): Promise<AnalysisDetail> {
   const res = await api.get(`/analysis/${taskId}`);
+  return res.data;
+}
+
+export async function rerunAnalysis(analysisId: string, prompt: string): Promise<any> {
+  const formData = new FormData();
+  formData.append('prompt', prompt);
+  const res = await api.post(`/analysis/rerun/${analysisId}`, formData);
+  return res.data;
+}
+
+export async function getVersionResult(versionId: string): Promise<string> {
+  const res = await api.get(`/result/version/${versionId}`, { responseType: 'text' });
   return res.data;
 }
 
