@@ -32,11 +32,11 @@ export function ResultsDisplay({ analysis, transcription, taskId }: ResultsDispl
               <TabsTrigger value="transcription">Transcription brute</TabsTrigger>
             </TabsList>
             <div className="flex gap-2">
-              <Button variant="secondary" size="sm" onClick={handleDownloadReport}>
+              <Button variant="outline" size="sm" onClick={handleDownloadReport}>
                 <Download className="mr-2 h-4 w-4" />
                 Télécharger rapport
               </Button>
-              <Button variant="secondary" size="sm" onClick={handleDownloadTranscription}>
+              <Button variant="outline" size="sm" onClick={handleDownloadTranscription}>
                 <Download className="mr-2 h-4 w-4" />
                 Télécharger transcription
               </Button>

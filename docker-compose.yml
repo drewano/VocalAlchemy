@@ -1,0 +1,47 @@
+# Version de la syntaxe Docker Compose
+version: '3.8'
+
+# Définition des services (conteneurs)
+services:
+  # Service pour la base de données PostgreSQL
+  db:
+    image: postgres:15-alpine  # Utilise une image PostgreSQL officielle et légère
+    container_name: mon_projet_db
+    environment:
+      # Ces variables sont utilisées par l'image Postgres pour initialiser la base.
+      # Assurez-vous qu'elles correspondent à celles dans votre fichier .env !
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: dbname
+    volumes:
+      # Ce volume rend les données de la base de données persistantes.
+      # Même si vous supprimez le conteneur, les données seront conservées.
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Mappe le port 5432 de votre machine au port 5432 du conteneur.
+      # Utile pour se connecter à la base depuis votre PC avec un client SQL.
+      - "5432:5432"
+    restart: unless-stopped # Redémarre le conteneur sauf s'il a été arrêté manuellement
+
+  # Service pour votre application (backend + frontend)
+  app:
+    # Construit l'image à partir du Dockerfile dans le répertoire courant (.)
+    build: .
+    container_name: mon_projet_app
+    ports:
+      # Mappe le port 8000 de votre machine au port 8000 du conteneur.
+      - "8000:8000"
+    env_file:
+      # Injecte les variables d'environnement depuis le fichier .env
+      - .env
+    volumes:
+        # Monte le dossier 'uploads' local dans le conteneur pour la persistance des fichiers
+      - ./uploads:/app/uploads
+    depends_on:
+      # S'assure que le service 'db' est démarré avant le service 'app'.
+      - db
+    restart: unless-stopped
+
+# Définition des volumes nommés
+volumes:
+  postgres_data: # Le volume pour les données de la base de données

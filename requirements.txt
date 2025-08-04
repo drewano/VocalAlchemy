@@ -6,3 +6,9 @@ google-generativeai
 python-dotenv
 python-multipart
 jinja2
+sqlalchemy
+psycopg2-binary
+passlib[bcrypt]==1.7.4
+bcrypt==3.2.2
+python-jose[cryptography]
+alembic

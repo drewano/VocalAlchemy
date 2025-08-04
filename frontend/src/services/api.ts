@@ -1,21 +1,35 @@
+import axios from 'axios';
+
 // Types pour l'API
 export interface PredefinedPrompts {
   [key: string]: string;
 }
 
-// URL de base pour l'API
-const API_BASE_URL = '/api';
+// Créer une instance axios de base
+const api = axios.create({
+  baseURL: '/api',
+  withCredentials: true, // Si nécessaire pour les cookies
+});
+
+// Intercepteur pour ajouter automatiquement le token d'authentification à chaque requête
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers = config.headers || {};
+    (config.headers as any).Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+export { api };
 
 /**
  * Récupère les prompts prédéfinis depuis le backend
  * @returns Un objet contenant les prompts prédéfinis
  */
 export async function getPrompts(): Promise<PredefinedPrompts> {
-  const response = await fetch(`${API_BASE_URL}/prompts`);
-  if (!response.ok) {
-    throw new Error(`Erreur HTTP: ${response.status}`);
-  }
-  return response.json();
+  const response = await api.get('/prompts');
+  return response.data;
 }
 
 /**
@@ -29,16 +43,13 @@ export async function processAudio(file: File, prompt: string): Promise<{ task_i
   formData.append('file', file);
   formData.append('prompt', prompt);
   
-  const response = await fetch(`${API_BASE_URL}/process-audio/`, {
-    method: 'POST',
-    body: formData,
+  const response = await api.post('/analysis/process-audio/', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
   });
   
-  if (!response.ok) {
-    throw new Error(`Erreur HTTP: ${response.status}`);
-  }
-  
-  return response.json();
+  return response.data;
 }
 
 /**
@@ -46,12 +57,9 @@ export async function processAudio(file: File, prompt: string): Promise<{ task_i
  * @param taskId L'ID de la tâche à vérifier
  * @returns Un objet contenant le statut de la tâche
  */
-export async function getTaskStatus(taskId: string): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}/status/${taskId}`);
-  if (!response.ok) {
-    throw new Error(`Erreur HTTP: ${response.status}`);
-  }
-  return response.json();
+export async function getTaskStatus(taskId: string): Promise<{ status: string; has_result: boolean; has_transcript: boolean }> {
+  const response = await api.get(`/status/${taskId}`);
+  return response.data;
 }
 
 /**
@@ -61,9 +69,50 @@ export async function getTaskStatus(taskId: string): Promise<{ status: string }>
  * @returns Le contenu du fichier texte
  */
 export async function getResultFile(taskId: string, type: 'result' | 'transcript'): Promise<string> {
-  const response = await fetch(`${API_BASE_URL}/${type}/${taskId}`);
-  if (!response.ok) {
-    throw new Error(`Erreur HTTP: ${response.status}`);
-  }
-  return response.text();
+  const response = await api.get(`/${type}/${taskId}`, { responseType: 'text' });
+  return response.data;
+}
+
+export type AnalysisSummary = { id: string; status: string; created_at: string; filename: string };
+export type AnalysisDetail = AnalysisSummary & { has_result: boolean; has_transcript: boolean };
+
+export async function listAnalyses(): Promise<AnalysisSummary[]> {
+  const res = await api.get('/analysis/list');
+  return res.data;
+}
+
+export async function getAnalysis(taskId: string): Promise<AnalysisDetail> {
+  const res = await api.get(`/analysis/${taskId}`);
+  return res.data;
+}
+
+/**
+ * Connecte un utilisateur
+ * @param email L'email de l'utilisateur
+ * @param password Le mot de passe de l'utilisateur
+ * @returns Un objet contenant le token d'accès
+ */
+export async function login(email: string, password: string): Promise<{ access_token: string }> {
+  const formData = new FormData();
+  formData.append('username', email); // Le backend attend 'username' pour l'email
+  formData.append('password', password);
+  
+  const response = await api.post('/users/token', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  
+  return response.data;
+}
+
+/**
+ * Inscrit un nouvel utilisateur
+ * @param email L'email de l'utilisateur
+ * @param password Le mot de passe de l'utilisateur
+ * @returns Un objet contenant le token d'accès
+ */
+export async function signup(email: string, password: string): Promise<{ access_token: string }> {
+  const response = await api.post('/users/register', { email, password });
+  return response.data;
 }
