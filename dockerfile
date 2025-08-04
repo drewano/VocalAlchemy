@@ -6,13 +6,13 @@ FROM node:20-alpine AS frontend-builder
 # On définit le répertoire de travail
 WORKDIR /app/frontend
 
-# On copie d'abord package.json pour profiter du cache Docker.
-# Si ce fichier ne change pas, `npm install` ne sera pas ré-exécuté.
-COPY frontend/package.json .
+# On copie d'abord les fichiers de dépendances pour profiter du cache Docker.
+# Si ces fichiers ne changent pas, `npm install` ne sera pas ré-exécuté.
+COPY frontend/package.json ./
 RUN npm install
 
 # On copie le reste du code source du frontend
-COPY frontend/ .
+COPY frontend/ ./
 
 # On exécute la commande de build pour générer les fichiers statiques optimisés.
 # Le résultat sera dans le dossier /app/frontend/dist/
@@ -23,18 +23,18 @@ RUN npm run build
 # On part d'une image Python 3.11 légère.
 FROM python:3.11-slim
 
-# Variables d'environnement pour Python
+# Variables d'environnement pour Python pour optimiser l'exécution dans un conteneur.
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
 # Installation des dépendances système.
-# ffmpeg est requis par pydub pour traiter les fichiers audio.
+# ffmpeg est requis par pydub (une de vos dépendances Python) pour traiter les fichiers audio.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Définition du répertoire de travail
+# Définition du répertoire de travail dans l'image finale
 WORKDIR /app
 
 # Copie et installation des dépendances Python
@@ -48,9 +48,10 @@ COPY backend/src ./src
 # CRUCIAL: Copie des fichiers statiques du frontend (buildés à l'étape 1)
 # On copie le contenu du dossier /app/frontend/dist de l'étape "frontend-builder"
 # vers un dossier /app/static dans notre image finale.
+# FastAPI est configuré pour servir les fichiers de ce dossier.
 COPY --from=frontend-builder /app/frontend/dist /app/static
 
-# Création du répertoire 'uploads' que l'application utilise.
+# Création du répertoire 'uploads' que l'application utilise pour stocker les fichiers temporaires.
 RUN mkdir uploads
 
 # Exposition du port sur lequel FastAPI va écouter
@@ -59,5 +60,5 @@ EXPOSE 8000
 # Commande pour démarrer l'application avec Uvicorn.
 # --host 0.0.0.0 est nécessaire pour que le serveur soit accessible depuis l'extérieur du conteneur.
 # NOTE: Les clés API (GLADIA_API_KEY, GOOGLE_API_KEY) doivent être fournies comme variables
-# d'environnement lors de l'exécution du conteneur (ex: via un fichier .env et docker-compose).
+# d'environnement lors de l'exécution du conteneur.
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
