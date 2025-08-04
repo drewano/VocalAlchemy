@@ -1,9 +1,17 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum as SAEnum
+from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.sql import func
 import uuid
+import enum
 
-from .database import Base
+from src.infrastructure.database import Base
+
+
+class AnalysisStatus(enum.Enum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 class User(Base):
     __tablename__ = "users"
@@ -22,7 +30,9 @@ class Analysis(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    status = Column(String, nullable=False)
+    status: Mapped[AnalysisStatus] = mapped_column(SAEnum(AnalysisStatus), nullable=False)
+    error_message: Mapped[str] = mapped_column(String, nullable=True)
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     source_file_path = Column(String, nullable=False)
     result_path = Column(String, nullable=True)
     transcript_path = Column(String, nullable=True)

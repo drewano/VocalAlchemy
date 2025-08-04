@@ -5,11 +5,11 @@ from datetime import timedelta
 from fastapi import FastAPI, HTTPException, APIRouter, Depends, File, UploadFile, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles 
-from src.core.prompts import PREDEFINED_PROMPTS
-from src.routers import users, analysis
+from src.services.prompts import PREDEFINED_PROMPTS
+from src.api.endpoints import users, analysis
 
-from .database import engine
-from . import models
+from src.infrastructure.database import engine
+from src.infrastructure import sql_models as models
 
 models.Base.metadata.create_all(bind=engine)
 

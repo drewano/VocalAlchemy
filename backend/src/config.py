@@ -1,24 +1,27 @@
-import os
-from dotenv import load_dotenv
+from typing import Optional
+from pydantic import Field, PostgresDsn, constr
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Load environment variables from .env file
-load_dotenv()
 
-# Load API keys from environment variables
-GLADIA_API_KEY = os.getenv("GLADIA_API_KEY")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+class Settings(BaseSettings):
+    # API keys
+    GLADIA_API_KEY: constr(strip_whitespace=True, min_length=1)
+    GOOGLE_API_KEY: constr(strip_whitespace=True, min_length=1)
 
-# Database URL
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/dbname")
+    # Database
+    DATABASE_URL: PostgresDsn | str = Field(
+        default="postgresql://user:password@localhost/dbname",
+        description="SQLAlchemy-compatible database URL",
+    )
 
-# JWT Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key_here")
-ALGORITHM = os.getenv("ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
+    # JWT configuration
+    SECRET_KEY: constr(strip_whitespace=True, min_length=1) = Field(
+        default="your_secret_key_here"
+    )
+    ALGORITHM: constr(strip_whitespace=True, min_length=1) = Field(default="HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, ge=1)
 
-# Check if keys are present and raise ValueError if not
-if not GLADIA_API_KEY:
-    raise ValueError("GLADIA_API_KEY not found in environment variables. Please set it in your .env file.")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-if not GOOGLE_API_KEY:
-    raise ValueError("GOOGLE_API_KEY not found in environment variables. Please set it in your .env file.")
+
+settings = Settings()

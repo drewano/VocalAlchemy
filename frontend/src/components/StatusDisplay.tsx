@@ -7,30 +7,34 @@ interface StatusDisplayProps {
 }
 
 export function StatusDisplay({ status }: StatusDisplayProps) {
-  // Messages d'état traduits
+  // Normalise et supporte les statuts backend (PENDING, PROCESSING, COMPLETED, FAILED) + fallback legacy
+  const normalized = (status || '').toUpperCase()
+
   const statusMessages: Record<string, string> = {
-    'processing': 'Traitement en cours...',
-    'Démarré': 'Le traitement a démarré...',
-    'Transcription en cours': 'Transcription de l\'audio...',
-    'Analyse en cours': 'Analyse du contenu...',
-    'Génération du rapport': 'Génération du rapport...',
-    'Terminé': 'Traitement terminé !',
-  };
+    PENDING: 'Mise en file et préparation... ',
+    PROCESSING: 'Traitement en cours...',
+    COMPLETED: 'Traitement terminé !',
+    FAILED: 'Échec du traitement',
+    // Fallbacks anciens libellés
+    'DÉMARRÉ': 'Le traitement a démarré...',
+    'TRANSCRIPTION EN COURS': "Transcription de l'audio...",
+    'ANALYSE EN COURS': 'Analyse du contenu...',
+    "GÉNÉRATION DU RAPPORT": 'Génération du rapport...',
+  }
 
-  // Progression approximative pour chaque statut
   const statusProgress: Record<string, number> = {
-    'Démarré': 10,
-    'Transcription en cours': 40,
-    'Analyse en cours': 70,
-    'Génération du rapport': 90,
-    'Terminé': 100,
-  };
+    PENDING: 15,
+    PROCESSING: 60,
+    COMPLETED: 100,
+    FAILED: 100,
+    'DÉMARRÉ': 10,
+    'TRANSCRIPTION EN COURS': 40,
+    'ANALYSE EN COURS': 70,
+    "GÉNÉRATION DU RAPPORT": 90,
+  }
 
-  // Obtenir le message approprié ou utiliser le statut tel quel
-  const displayMessage = statusMessages[status] || status;
-  
-  // Obtenir la progression appropriée ou 75 par défaut
-  const progressValue = statusProgress[status] || 75;
+  const displayMessage = statusMessages[normalized] || status
+  const progressValue = statusProgress[normalized] ?? 75
 
   return (
     <Card>
@@ -43,5 +47,5 @@ export function StatusDisplay({ status }: StatusDisplayProps) {
         <Progress value={progressValue} className="w-full" />
       </CardContent>
     </Card>
-  );
+  )
 }

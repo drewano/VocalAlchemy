@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { PredefinedPrompts } from '@/services/api';
+import type { PredefinedPrompts } from '@/types';
 
 interface UploadFormProps {
   prompts: PredefinedPrompts;
@@ -20,7 +20,7 @@ interface UploadFormProps {
 
 export function UploadForm({ prompts, onSubmit, isLoading }: UploadFormProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [selectedPrompt, setSelectedPrompt] = useState<string>('');
+  const [selectedPromptText, setSelectedPromptText] = useState<string>('');
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -29,13 +29,14 @@ export function UploadForm({ prompts, onSubmit, isLoading }: UploadFormProps) {
   };
 
   const handlePromptChange = (value: string) => {
-    setSelectedPrompt(value);
+    // value is now the textual prompt
+    setSelectedPromptText(value);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedFile && selectedPrompt) {
-      onSubmit(selectedFile, selectedPrompt);
+    if (selectedFile && selectedPromptText) {
+      onSubmit(selectedFile, selectedPromptText);
     }
   };
 
@@ -62,13 +63,13 @@ export function UploadForm({ prompts, onSubmit, isLoading }: UploadFormProps) {
           
           <div className="space-y-2">
             <Label htmlFor="prompt-select">Type d'analyse</Label>
-            <Select value={selectedPrompt} onValueChange={handlePromptChange} disabled={isLoading}>
+            <Select value={selectedPromptText} onValueChange={handlePromptChange} disabled={isLoading}>
               <SelectTrigger id="prompt-select">
                 <SelectValue placeholder="Sélectionnez un type d'analyse" />
               </SelectTrigger>
               <SelectContent>
                 {Object.keys(prompts).map((promptKey) => (
-                  <SelectItem key={promptKey} value={promptKey}>
+                  <SelectItem key={promptKey} value={prompts[promptKey]}>
                     {promptKey}
                   </SelectItem>
                 ))}
@@ -78,7 +79,7 @@ export function UploadForm({ prompts, onSubmit, isLoading }: UploadFormProps) {
           
           <Button 
             type="submit" 
-            disabled={isLoading || !selectedFile || !selectedPrompt}
+            disabled={isLoading || !selectedFile || !selectedPromptText}
             className="w-full"
           >
             {isLoading ? (

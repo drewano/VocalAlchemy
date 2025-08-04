@@ -4,18 +4,25 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from datetime import timedelta
 
-from .. import models, schemas, auth
-from ..database import get_db
+from src.infrastructure import sql_models as models
+from src.api import schemas
+from src import auth
+from src.infrastructure.database import get_db
+from src.infrastructure.repositories.user_repository import UserRepository
 
 
 router = APIRouter()
 
 
+def get_user_repository(db: Session = Depends(get_db)) -> UserRepository:
+    return UserRepository(db)
+
+
 @router.post("/register", response_model=schemas.User, status_code=status.HTTP_201_CREATED)
-def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+def register_user(user: schemas.UserCreate, db: Session = Depends(get_db), user_repo: UserRepository = Depends(get_user_repository)):
     """Register a new user."""
     # Check if user already exists
-    db_user = db.query(models.User).filter(models.User.email == user.email).first()
+    db_user = user_repo.get_by_email(user.email)
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -23,11 +30,8 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     hashed_password = auth.get_password_hash(user.password)
 
     # Create new user
-    db_user = models.User(email=user.email, hashed_password=hashed_password)
-    db.add(db_user)
     try:
-        db.commit()
-        db.refresh(db_user)
+        db_user = user_repo.create(email=user.email, hashed_password=hashed_password)
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -45,7 +49,7 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token_expires = timedelta(minutes=auth.settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = auth.create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )

@@ -1,14 +1,47 @@
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, BackgroundTasks, Form
 from fastapi.responses import FileResponse, PlainTextResponse
 import os
+import uuid
+import aiofiles
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models, schemas
-from ..database import get_db
-from ..auth import get_current_user
-from ..core.pipeline import run_full_pipeline, rerun_analysis_from_transcript
+from src.infrastructure import sql_models as models
+from src.api import schemas
+from src.infrastructure.database import get_db
+from src.auth import get_current_user
+from src.infrastructure.repositories.analysis_repository import AnalysisRepository
+from src.services.analysis_service import AnalysisService, AnalysisNotFoundException
+from src.services.audio_splitter import split_audio
+from src.services.external_apis.gladia_client import GladiaClient
+from src.services.external_apis.ai_processor import GoogleAIProcessor
+from src.config import settings
 
 router = APIRouter()
+
+def get_analysis_repository(db: Session = Depends(get_db)) -> AnalysisRepository:
+    return AnalysisRepository(db)
+
+# External clients dependencies
+
+def get_transcriber() -> GladiaClient:
+    return GladiaClient(api_key=settings.GLADIA_API_KEY)
+
+
+def get_ai_analyzer() -> GoogleAIProcessor:
+    return GoogleAIProcessor(api_key=settings.GOOGLE_API_KEY)
+
+
+def get_analysis_service(
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+    transcriber: GladiaClient = Depends(get_transcriber),
+    ai_analyzer: GoogleAIProcessor = Depends(get_ai_analyzer),
+) -> AnalysisService:
+    return AnalysisService(
+        analysis_repo,
+        audio_splitter=split_audio,
+        transcriber=transcriber,
+        ai_analyzer=ai_analyzer,
+    )
 
 # Alias direct pour compat: POST /api/process-audio/
 @router.post("/process-audio/", tags=["alias"])  # réel: /api/analysis/process-audio/
@@ -17,48 +50,55 @@ async def process_audio(
     file: UploadFile = File(...),
     prompt: str = Form(...),
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    analysis_service: AnalysisService = Depends(get_analysis_service),
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
 ):
+    # 1. Create analysis row with temporary path
+    analysis = analysis_repo.create(
+        user_id=current_user.id,
+        status=models.AnalysisStatus.PENDING,
+        source_file_path=file.filename or "uploaded_audio",
+        prompt=prompt,
+    )
+
+    analysis_id = analysis.id
+
+    # 3. Prepare output dir and destination path
+    base_output_dir = os.path.join("uploads", analysis_id)
+    source_path = os.path.join(base_output_dir, file.filename)
+
+    # 5. Ensure directories
+    os.makedirs(base_output_dir, exist_ok=True)
+
+    # 6. Update record now that we know the final source path
     try:
-        if not file:
-            raise HTTPException(status_code=400, detail="No file provided")
-
-        analysis = models.Analysis(
-            user_id=current_user.id,
-            status="Démarré",
-            source_file_path="",
-        )
-        db.add(analysis)
-        db.commit()
-        db.refresh(analysis)
-
-        os.makedirs("uploads", exist_ok=True)
-        task_dir = os.path.join("uploads", analysis.id)
-        os.makedirs(task_dir, exist_ok=True)
-
-        filename = file.filename or "uploaded_file"
-        safe_filename = filename.replace("/", "_").replace("\\", "_")
-        file_path = os.path.join(task_dir, safe_filename)
-
-        with open(file_path, "wb") as buffer:
+        # Save uploaded file asynchronously
+        async with aiofiles.open(source_path, "wb") as out_file:
             content = await file.read()
-            buffer.write(content)
+            await out_file.write(content)
 
-        analysis.source_file_path = file_path
-        db.commit()
-
+        # Background task to run full pipeline
         background_tasks.add_task(
-            run_full_pipeline,
-            analysis_id=analysis.id,
-            source_path=file_path,
-            base_output_dir=task_dir,
-            user_prompt=prompt
+            analysis_service.run_full_pipeline,
+            analysis_id,
+            source_path,
+            base_output_dir,
+            prompt,
         )
 
-        return {"task_id": analysis.id}
+        # Persist the correct source_file_path after successful save
+        # Reuse update_paths_and_status to just commit the source path via direct model change if available
+        # As repository lacks a dedicated method, do minimal update
+        rec = analysis_repo.get_by_id(analysis_id)
+        if rec:
+            rec.source_file_path = source_path
+            analysis_repo.db.commit()
+
+        return {"analysis_id": analysis_id}
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+        # Mark as failed on any error during save
+        analysis_repo.update_status(analysis_id, models.AnalysisStatus.FAILED)
+        raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
 
 
 @router.post("/rerun/{analysis_id}")
@@ -67,10 +107,12 @@ async def rerun_analysis(
     background_tasks: BackgroundTasks,
     prompt: str = Form(...),
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+    analysis_service: AnalysisService = Depends(get_analysis_service),
 ):
     # 1. Verify analysis exists and belongs to user
-    analysis = db.query(models.Analysis).filter(models.Analysis.id == analysis_id).first()
+    analysis = analysis_repo.get_by_id(analysis_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
     if analysis.user_id != current_user.id:
@@ -81,10 +123,10 @@ async def rerun_analysis(
     if not transcript_path or not os.path.exists(transcript_path):
         raise HTTPException(status_code=404, detail="Transcript not available for rerun")
 
-    # 3. Read transcript content
+    # 3. Read transcript content asynchronously
     try:
-        with open(transcript_path, "r", encoding="utf-8") as f:
-            transcript = f.read()
+        async with aiofiles.open(transcript_path, "r", encoding="utf-8") as f:
+            transcript = await f.read()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read transcript: {str(e)}")
 
@@ -92,9 +134,12 @@ async def rerun_analysis(
     task_dir = os.path.dirname(transcript_path) or os.path.join("uploads", analysis_id)
     os.makedirs(task_dir, exist_ok=True)
 
+    # Update status to PROCESSING before launching background task
+    analysis_repo.update_status(analysis_id, models.AnalysisStatus.PROCESSING)
+
     # 4. Launch background task to rerun analysis
     background_tasks.add_task(
-        rerun_analysis_from_transcript,
+        analysis_service.rerun_analysis_from_transcript,
         analysis_id=analysis_id,
         transcript=transcript,
         new_prompt=prompt,
@@ -102,16 +147,17 @@ async def rerun_analysis(
     )
 
     # 5. Return success
-    return {"message": "Rerun started", "task_id": analysis_id}
+    return {"message": "Rerun started", "analysis_id": analysis_id}
 
 
-@router.get("/status/{task_id}")
+@router.get("/status/{analysis_id}")
 async def get_status(
-    task_id: str,
+    analysis_id: str,
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
 ):
-    analysis = db.query(models.Analysis).filter(models.Analysis.id == task_id).first()
+    analysis = analysis_repo.get_by_id(analysis_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
     if analysis.user_id != current_user.id:
@@ -124,18 +170,19 @@ async def get_status(
     }
 
 
-@router.get("/result/{task_id}")
+@router.get("/result/{analysis_id}")
 async def get_result(
-    task_id: str,
+    analysis_id: str,
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
 ):
-    analysis = db.query(models.Analysis).filter(models.Analysis.id == task_id).first()
+    analysis = analysis_repo.get_by_id(analysis_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
     if analysis.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
-    if analysis.status != "Terminé":
+    if analysis.status != models.AnalysisStatus.COMPLETED:
         raise HTTPException(status_code=422, detail="Task not completed yet")
     if not analysis.result_path or not os.path.exists(analysis.result_path):
         raise HTTPException(status_code=404, detail="Result file not found")
@@ -147,13 +194,14 @@ async def get_result(
 async def get_version_result(
     version_id: str,
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
 ):
-    version = db.query(models.AnalysisVersion).filter(models.AnalysisVersion.id == version_id).first()
+    version = analysis_repo.get_version_by_id(version_id)
     if not version:
         raise HTTPException(status_code=404, detail="Version not found")
     # Check ownership via the parent analysis
-    analysis = db.query(models.Analysis).filter(models.Analysis.id == version.analysis_id).first()
+    analysis = analysis_repo.get_by_id(version.analysis_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Parent analysis not found")
     if analysis.user_id != current_user.id:
@@ -170,18 +218,19 @@ async def get_version_result(
     return PlainTextResponse(content)
 
 
-@router.get("/transcript/{task_id}")
+@router.get("/transcript/{analysis_id}")
 async def get_transcript(
-    task_id: str,
+    analysis_id: str,
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
 ):
-    analysis = db.query(models.Analysis).filter(models.Analysis.id == task_id).first()
+    analysis = analysis_repo.get_by_id(analysis_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
     if analysis.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
-    if analysis.status != "Terminé":
+    if analysis.status != models.AnalysisStatus.COMPLETED:
         raise HTTPException(status_code=422, detail="Task not completed yet")
     if not analysis.transcript_path or not os.path.exists(analysis.transcript_path):
         raise HTTPException(status_code=404, detail="Transcript file not found")
@@ -192,14 +241,10 @@ async def get_transcript(
 @router.get("/list")
 async def list_analyses(
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
 ):
-    items = (
-        db.query(models.Analysis)
-        .filter(models.Analysis.user_id == current_user.id)
-        .order_by(models.Analysis.created_at.desc())
-        .all()
-    )
+    items = analysis_repo.list_by_user(current_user.id)
     return [
         {
             "id": a.id,
@@ -211,18 +256,14 @@ async def list_analyses(
     ]
 
 
-@router.get("/{task_id}")
+@router.get("/{analysis_id}")
 async def get_analysis_detail(
-    task_id: str,
+    analysis_id: str,
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
 ) -> schemas.AnalysisDetail:
-    a = (
-        db.query(models.Analysis)
-        .options(joinedload(models.Analysis.versions))
-        .filter(models.Analysis.id == task_id)
-        .first()
-    )
+    a = analysis_repo.get_detailed_by_id(analysis_id)
     if not a:
         raise HTTPException(status_code=404, detail="Analysis not found")
     if a.user_id != current_user.id:

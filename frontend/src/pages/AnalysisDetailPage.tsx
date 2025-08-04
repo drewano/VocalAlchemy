@@ -1,58 +1,28 @@
-import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import * as api from '@/services/api';
-import type { AnalysisDetail, AnalysisVersion } from '@/services/api';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Textarea } from '@/components/ui/textarea';
-import { LoaderCircle } from 'lucide-react';
+import React from 'react'
+import { useParams } from 'react-router-dom'
+import type { AnalysisVersion } from '@/types'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Textarea } from '@/components/ui/textarea'
+import { LoaderCircle } from 'lucide-react'
+import { useAnalysisDetail } from '@/hooks/useAnalysisDetail'
+import { StatusDisplay } from '@/components/StatusDisplay'
 
 const AnalysisDetailPage: React.FC = () => {
-  const { analysisId } = useParams<{ analysisId: string }>();
+  const { analysisId } = useParams<{ analysisId: string }>()
 
-  const [analysisData, setAnalysisData] = useState<AnalysisDetail | null>(null);
-  const [currentPrompt, setCurrentPrompt] = useState<string>('');
-  const [currentAnalysis, setCurrentAnalysis] = useState<string>('');
-  const [currentPeople, setCurrentPeople] = useState<string>('');
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isRerunning, setIsRerunning] = useState<boolean>(false);
-
-  useEffect(() => {
-    const load = async () => {
-      if (!analysisId) return;
-      setIsLoading(true);
-      try {
-        const data = await api.getAnalysisDetail(analysisId);
-        setAnalysisData(data);
-        setCurrentPrompt(data.prompt || '');
-        setCurrentAnalysis(data.latest_analysis || 'Aucune analyse disponible.');
-        setCurrentPeople(data.people_involved || 'Non spécifié');
-      } catch (e) {
-        console.error('Failed to load analysis detail', e);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    load();
-  }, [analysisId]);
-
-  const handleRerun = async () => {
-    if (!analysisId || !currentPrompt.trim()) return;
-    setIsRerunning(true);
-    try {
-      await api.rerunAnalysis(analysisId, currentPrompt);
-      // success toast could be added here with sonner
-      const data = await api.getAnalysisDetail(analysisId);
-      setAnalysisData(data);
-      setCurrentAnalysis(data.latest_analysis || 'Aucune analyse disponible.');
-      setCurrentPeople(data.people_involved || 'Non spécifié');
-    } catch (e) {
-      console.error('Failed to rerun analysis', e);
-    } finally {
-      setIsRerunning(false);
-    }
-  };
+  const {
+    analysisData,
+    currentAnalysis,
+    currentPrompt,
+    currentPeople,
+    isLoading,
+    isRerunning,
+    setCurrentPrompt,
+    rerunAnalysis,
+    selectVersion,
+  } = useAnalysisDetail(analysisId)
 
   if (isLoading) {
     return (
@@ -67,7 +37,7 @@ const AnalysisDetailPage: React.FC = () => {
           </div>
         </div>
       </div>
-    );
+    )
   }
 
   if (!analysisData) {
@@ -77,12 +47,18 @@ const AnalysisDetailPage: React.FC = () => {
           <CardHeader>
             <CardTitle>Analyse introuvable</CardTitle>
           </CardHeader>
-          <CardContent>
-            Impossible de charger les détails de l'analyse.
-          </CardContent>
+          <CardContent>Impossible de charger les détails de l'analyse.</CardContent>
         </Card>
       </div>
-    );
+    )
+  }
+
+  if (analysisData && (analysisData.status === 'PROCESSING' || analysisData.status === 'PENDING')) {
+    return (
+      <div className="container mx-auto py-8">
+        <StatusDisplay status={analysisData.status} />
+      </div>
+    )
   }
 
   return (
@@ -100,7 +76,9 @@ const AnalysisDetailPage: React.FC = () => {
             </div>
             <div>
               <div className="text-sm text-muted-foreground">Créée le</div>
-              <div className="font-medium">{new Date(analysisData.created_at).toLocaleString()}</div>
+              <div className="font-medium">
+                {new Date(analysisData.created_at).toLocaleString()}
+              </div>
             </div>
             <div>
               <div className="text-sm text-muted-foreground">Personnes concernées</div>
@@ -133,13 +111,17 @@ const AnalysisDetailPage: React.FC = () => {
             <CardContent className="space-y-4">
               <Textarea
                 value={currentPrompt}
-                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setCurrentPrompt(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                  setCurrentPrompt(e.target.value)
+                }
                 placeholder="Saisissez un nouveau prompt..."
                 className="min-h-24"
               />
-              <Button onClick={handleRerun} disabled={isRerunning || !currentPrompt.trim()}>
+              <Button onClick={rerunAnalysis} disabled={isRerunning || !currentPrompt.trim()}>
                 {isRerunning ? (
-                  <span className="inline-flex items-center gap-2"><LoaderCircle className="h-4 w-4 animate-spin" /> Relance...</span>
+                  <span className="inline-flex items-center gap-2">
+                    <LoaderCircle className="h-4 w-4 animate-spin" /> Relance...
+                  </span>
                 ) : (
                   "Relancer l'analyse"
                 )}
@@ -174,19 +156,12 @@ const AnalysisDetailPage: React.FC = () => {
                   <button
                     key={v.id}
                     className="w-full text-left p-3 rounded-lg border hover:bg-muted/50"
-                    onClick={async () => {
-                      setCurrentPeople(v.people_involved || 'Non spécifié');
-                      setCurrentPrompt(v.prompt_used || '');
-                      try {
-                        const content = await api.getVersionResult(v.id);
-                        setCurrentAnalysis(content || 'Aucune analyse disponible.');
-                      } catch (e) {
-                        console.error('Failed to load version result', e);
-                      }
-                    }}
+                    onClick={() => selectVersion(v)}
                   >
                     <div className="flex items-center justify-between">
-                      <div className="font-medium">{new Date(v.created_at).toLocaleString()}</div>
+                      <div className="font-medium">
+                        {new Date(v.created_at).toLocaleString()}
+                      </div>
                       <div className="text-xs text-muted-foreground truncate max-w-[50%]">
                         {v.prompt_used}
                       </div>
@@ -207,7 +182,7 @@ const AnalysisDetailPage: React.FC = () => {
         </div>
       </div>
     </div>
-  );
-};
+  )
+}
 
-export default AnalysisDetailPage;
+export default AnalysisDetailPage

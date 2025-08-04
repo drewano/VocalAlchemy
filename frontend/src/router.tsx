@@ -1,26 +1,19 @@
 // React import not needed with jsx runtime and verbatimModuleSyntax
-import { createBrowserRouter } from 'react-router-dom';
-import App from './App'; // Layout principal
-import LoginPage from './pages/LoginPage';
-import SignupPage from './pages/SignupPage';
-import DashboardPage from './pages/DashboardPage';
-import ProfilePage from './pages/ProfilePage';
-import ProtectedRoute from './routes/ProtectedRoute';
-import AnalysisDetailPage from './pages/AnalysisDetailPage';
+import { createBrowserRouter } from 'react-router-dom'
+import App from './App'
+import LoginPage from './pages/LoginPage'
+import SignupPage from './pages/SignupPage'
+import DashboardPage from './pages/DashboardPage'
+import ProfilePage from './pages/ProfilePage'
+import ProtectedRoute from './routes/ProtectedRoute'
+import AnalysisDetailPage from './pages/AnalysisDetailPage'
+import DashboardLayout from './layouts/DashboardLayout'
 
 const router = createBrowserRouter([
   {
     path: '/',
-    element: <App />, // Utilise App comme layout
+    element: <App />, // Shell de base pour routes publiques et parent layout
     children: [
-      {
-        index: true,
-        element: (
-          <ProtectedRoute>
-            <DashboardPage />
-          </ProtectedRoute>
-        ), // Page d'accueil - Tableau de bord (protégée)
-      },
       {
         path: 'login',
         element: <LoginPage />, // Page de connexion
@@ -30,32 +23,33 @@ const router = createBrowserRouter([
         element: <SignupPage />, // Page d'inscription
       },
       {
-        path: 'profile',
+        // Route parente protégée utilisant le DashboardLayout
         element: (
           <ProtectedRoute>
-            <ProfilePage />
-          </ProtectedRoute>
-        ), // Page de profil (protégée)
-      },
-      {
-        path: 'analysis',
-        element: (
-          <ProtectedRoute>
-            <DashboardPage />
-          </ProtectedRoute>
-        ), // Page d'analyse (protégée) - Pour l'instant, on utilise le même composant
-      },
-      {
-        path: 'analysis/:analysisId',
-        element: (
-          <ProtectedRoute>
-            <AnalysisDetailPage />
+            <DashboardLayout />
           </ProtectedRoute>
         ),
+        children: [
+          {
+            index: true,
+            element: <DashboardPage />, // Tableau de bord
+          },
+          {
+            path: 'profile',
+            element: <ProfilePage />, // Profil
+          },
+          {
+            path: 'analysis',
+            element: <DashboardPage />, // Liste/placeholder
+          },
+          {
+            path: 'analysis/:analysisId',
+            element: <AnalysisDetailPage />,
+          },
+        ],
       },
-      // Ajoutez d'autres routes ici
     ],
   },
-]);
+])
 
-export default router;
+export default router

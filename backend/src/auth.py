@@ -7,9 +7,11 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
-from . import models, schemas
-from .database import get_db
-from .config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
+from src.infrastructure import sql_models as models
+from src.api import schemas
+from src.infrastructure.database import get_db
+from src.config import settings
+from src.infrastructure.repositories.user_repository import UserRepository
 
 
 # Password hashing
@@ -35,15 +37,15 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
 
 
 def get_user(db: Session, email: str) -> Optional[models.User]:
-    """Retrieve a user from the database by email."""
-    return db.query(models.User).filter(models.User.email == email).first()
+    repo = UserRepository(db)
+    return repo.get_by_email(email)
 
 
 def authenticate_user(db: Session, email: str, password: str) -> Optional[models.User]:
@@ -64,7 +66,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception
