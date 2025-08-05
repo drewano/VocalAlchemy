@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { PredefinedPrompts, AnalysisSummary, AnalysisDetail, UserPrompt } from '@/types'
+import type { PredefinedPrompts, AnalysisSummary, AnalysisDetail } from '@/types'
 
 // Types locaux alignés avec AuthContext
 interface User {
@@ -116,25 +116,7 @@ export async function getVersionResult(versionId: string): Promise<string> {
   return res.data
 }
 
-// User prompts CRUD
-export async function getUserPrompts(): Promise<UserPrompt[]> {
-  const res = await api.get('/user-prompts')
-  return res.data
-}
-
-export async function createUserPrompt(data: { name: string; content: string }): Promise<UserPrompt> {
-  const res = await api.post('/user-prompts', data)
-  return res.data
-}
-
-export async function updateUserPrompt(id: number, data: { name: string; content: string }): Promise<UserPrompt> {
-  const res = await api.put(`/user-prompts/${id}`, data)
-  return res.data
-}
-
-export async function deleteUserPrompt(id: number): Promise<void> {
-  await api.delete(`/user-prompts/${id}`)
-}
+// User prompts CRUD moved to prompts.api.ts
 
 // Récupère l'utilisateur courant
 export async function getMe(): Promise<User> {

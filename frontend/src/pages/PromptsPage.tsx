@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { getUserPrompts, createUserPrompt, updateUserPrompt, deleteUserPrompt } from '@/services/api'
+import { getUserPrompts, createUserPrompt, updateUserPrompt, deleteUserPrompt } from '@/services/prompts.api'
 import type { UserPrompt } from '@/types'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 

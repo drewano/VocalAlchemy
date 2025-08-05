@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles 
 from src.services.prompts import PREDEFINED_PROMPTS
 from src.api.endpoints import users, analysis
-from src.api.endpoints import prompts as user_prompts
+from src.api.endpoints import user_prompts as user_prompts
 
 from src.infrastructure.database import engine
 from src.infrastructure import sql_models as models

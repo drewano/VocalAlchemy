@@ -18,7 +18,6 @@ def get_user_prompt_repository(db: Session = Depends(get_db)) -> UserPromptRepos
 @router.post("", response_model=schemas.UserPrompt, status_code=status.HTTP_201_CREATED)
 def create_prompt(
     prompt: schemas.UserPromptCreate,
-    db: Session = Depends(get_db),
     user: schemas.User = Depends(auth.get_current_user),
     repo: UserPromptRepository = Depends(get_user_prompt_repository),
 ):
@@ -27,7 +26,6 @@ def create_prompt(
 
 @router.get("", response_model=List[schemas.UserPrompt])
 def list_prompts(
-    db: Session = Depends(get_db),
     user: schemas.User = Depends(auth.get_current_user),
     repo: UserPromptRepository = Depends(get_user_prompt_repository),
 ):
@@ -38,7 +36,6 @@ def list_prompts(
 def update_prompt(
     prompt_id: int,
     prompt: schemas.UserPromptCreate,
-    db: Session = Depends(get_db),
     user: schemas.User = Depends(auth.get_current_user),
     repo: UserPromptRepository = Depends(get_user_prompt_repository),
 ):
@@ -52,7 +49,6 @@ def update_prompt(
 @router.delete("/{prompt_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_prompt(
     prompt_id: int,
-    db: Session = Depends(get_db),
     user: schemas.User = Depends(auth.get_current_user),
     repo: UserPromptRepository = Depends(get_user_prompt_repository),
 ):
