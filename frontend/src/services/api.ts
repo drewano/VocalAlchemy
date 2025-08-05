@@ -1,6 +1,14 @@
 import axios from 'axios'
 import type { PredefinedPrompts, AnalysisSummary, AnalysisDetail } from '@/types'
 
+// Types locaux alignés avec AuthContext
+interface User {
+  id: number;
+  email: string;
+}
+
+type LoginResponse = { access_token: string; token_type: string; user: User }
+
 // Créer une instance axios de base
 const api = axios.create({
   baseURL: '/api',
@@ -108,13 +116,19 @@ export async function getVersionResult(versionId: string): Promise<string> {
   return res.data
 }
 
+// Récupère l'utilisateur courant
+export async function getMe(): Promise<User> {
+  const res = await api.get('/users/me')
+  return res.data
+}
+
 /**
  * Connecte un utilisateur
  * @param email L'email de l'utilisateur
  * @param password Le mot de passe de l'utilisateur
- * @returns Un objet contenant le token d'accès
+ * @returns Objet contenant token, type et user
  */
-export async function login(email: string, password: string): Promise<{ access_token: string }> {
+export async function login(email: string, password: string): Promise<LoginResponse> {
   const formData = new FormData()
   formData.append('username', email) // Le backend attend 'username' pour l'email
   formData.append('password', password)

@@ -41,7 +41,7 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db), user_
 
 @router.post("/token", response_model=schemas.Token)
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    """Authenticate user and return JWT token."""
+    """Authenticate user and return JWT token along with user info."""
     user = auth.authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -53,4 +53,9 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
     access_token = auth.create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": access_token, "token_type": "bearer", "user": user}
+
+
+@router.get("/me", response_model=schemas.User)
+def read_users_me(user: models.User = Depends(auth.get_current_user)):
+    return user

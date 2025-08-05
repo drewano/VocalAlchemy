@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import AuthContext from '@/contexts/AuthContext'
 import { UploadForm } from '@/components/UploadForm'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useAnalysisHistory } from '@/hooks/useAnalysisHistory'
@@ -20,23 +19,13 @@ const DashboardPage: React.FC = () => {
     throw new Error('DashboardPage must be used within an AuthProvider')
   }
 
-  const { user, logout } = authContext
-
-  const handleLogout = () => {
-    logout()
-    navigate('/login')
-  }
+  // Profil/déconnexion gérés via /profile, pas d'usage ici
 
   return (
     <div className="container mx-auto py-8">
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold">Tableau de bord</h1>
-        <div className="flex items-center gap-4">
-          {user && <span className="text-sm">Connecté en tant que: {user.email}</span>}
-          <Button variant="outline" onClick={handleLogout}>
-            Déconnexion
-          </Button>
-        </div>
+        {/* Profil et déconnexion gérés désormais via la page Profil */}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

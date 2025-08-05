@@ -10,6 +10,12 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const auth = useContext(AuthContext);
   const location = useLocation();
 
+  // Afficher un état de chargement pendant la vérification du token
+  if (auth?.isLoading) {
+    return <div>Chargement...</div>;
+  }
+
+  // Rediriger uniquement après la fin du chargement si aucun token n'est présent
   if (!auth || !auth.token) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }

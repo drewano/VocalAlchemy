@@ -23,8 +23,8 @@ const LoginPage: React.FC = () => {
     
     try {
       const response = await api.login(data.email, data.password);
-      // Pour l'instant, on considère que l'ID de l'utilisateur est 1, à remplacer par l'ID réel
-      authLogin(response.access_token, { id: '1', email: data.email });
+      // Utiliser la réponse de l'API: { access_token, user }
+      authLogin(response.access_token, response.user);
       navigate('/'); // Rediriger vers le tableau de bord
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Erreur de connexion');

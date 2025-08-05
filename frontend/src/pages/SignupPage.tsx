@@ -1,21 +1,13 @@
-import React, { useState, useContext } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as api from '@/services/api';
-import AuthContext from '@/contexts/AuthContext';
 import { LoginForm } from '@/components/login-form';
 
 const SignupPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   
-  const authContext = useContext(AuthContext);
   const navigate = useNavigate();
-
-  if (!authContext) {
-    throw new Error('SignupPage must be used within an AuthProvider');
-  }
-
-  const { signup: authSignup } = authContext;
 
   const handleSubmit = async (data: { email: string; password: string; confirmPassword?: string }) => {
     // Vérification de la correspondance des mots de passe
@@ -28,10 +20,9 @@ const SignupPage: React.FC = () => {
     setError(null);
     
     try {
-      const response = await api.signup(data.email, data.password);
-      // Pour l'instant, on considère que l'ID de l'utilisateur est 1, à remplacer par l'ID réel
-      authSignup(response.access_token, { id: '1', email: data.email });
-      navigate('/login'); // Rediriger vers la page de connexion
+      await api.signup(data.email, data.password);
+      // Succès: rediriger simplement vers la page de connexion
+      navigate('/login');
     } catch (err: any) {
       setError(err.response?.data?.detail || "Erreur lors de l'inscription");
     } finally {
