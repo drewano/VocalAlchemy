@@ -1,6 +1,6 @@
 import * as React from "react"
-import { Link } from "react-router-dom"
-import { Pencil } from "lucide-react"
+import { Link, useLocation } from "react-router-dom"
+import { LayoutDashboard, History, FileText, Lightbulb, Settings, User } from "lucide-react"
 import { useAnalysisHistory } from "@/hooks/useAnalysisHistory"
 import { SearchForm } from "@/components/search-form"
 import {
@@ -15,7 +15,6 @@ import {
   SidebarGroupLabel,
   SidebarGroupContent,
   SidebarMenuSkeleton,
-  SidebarSeparator,
 } from "@/components/ui/sidebar"
 
 function truncate(text: string, max = 40) {
@@ -25,6 +24,7 @@ function truncate(text: string, max = 40) {
 
 export function AppSidebar({ onSearchChange, ...props }: React.ComponentProps<typeof Sidebar> & { onSearchChange?: (term: string) => void }) {
   const { history, isLoading } = useAnalysisHistory()
+  const location = useLocation()
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>
@@ -41,17 +41,47 @@ export function AppSidebar({ onSearchChange, ...props }: React.ComponentProps<ty
         <SearchForm className="px-0" onSearchChange={onSearchChange} />
       </SidebarHeader>
       <SidebarContent>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild>
-              <Link to="/prompts">
-                <Pencil />
-                <span>Gérer les prompts</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-        <SidebarSeparator />
+        {/* Nav principale */}
+        <nav className="px-2 py-2">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild className={location.pathname === '/' ? 'bg-gray-100' : undefined}>
+                <Link to="/">
+                  <LayoutDashboard />
+                  <span>Tableau de bord</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild>
+                <Link to="/history">
+                  <History />
+                  <span>Historique</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild>
+                <Link to="/documents">
+                  <FileText />
+                  <span>Documents</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild>
+                <Link to="/prompts">
+                  <Lightbulb />
+                  <span>Gérer les prompts</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </nav>
+
+        <div className="border-t my-2" />
+
+        {/* Historique listé (conservé) */}
         <SidebarGroup>
           <SidebarGroupLabel>Historique</SidebarGroupLabel>
           <SidebarGroupContent>
@@ -75,7 +105,30 @@ export function AppSidebar({ onSearchChange, ...props }: React.ComponentProps<ty
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter>{/* User/account controls could go here later */}</SidebarFooter>
+
+      <SidebarFooter>
+        <div className="border-t" />
+        <nav className="px-2 py-2">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild>
+                <Link to="/settings">
+                  <Settings />
+                  <span>Paramètres</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild>
+                <Link to="/profile">
+                  <User />
+                  <span>Profil</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </nav>
+      </SidebarFooter>
     </Sidebar>
   )
 }

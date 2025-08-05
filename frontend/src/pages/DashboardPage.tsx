@@ -4,9 +4,10 @@ import AuthContext from '@/contexts/AuthContext'
 import { UploadForm } from '@/components/UploadForm'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Input } from '@/components/ui/input'
 import { useAnalysisHistory } from '@/hooks/useAnalysisHistory'
 import { usePrompts } from '@/hooks/usePrompts'
+import { History, Search, CheckCircle2, Hourglass, XCircle } from 'lucide-react'
 
 const DashboardPage: React.FC = () => {
   const { history, isLoading, isSubmitting, submitNewAnalysis } = useAnalysisHistory()
@@ -25,14 +26,9 @@ const DashboardPage: React.FC = () => {
   )
 
   return (
-    <div className="container mx-auto py-8">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold">Tableau de bord</h1>
-        {/* Profil et déconnexion gérés désormais via la page Profil */}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Formulaire d'upload */}
+    <div className="container mx-auto p-8">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+        {/* Colonne 1: Formulaire d'upload */}
         <div>
           <Card className="mb-8">
             <CardHeader>
@@ -59,62 +55,71 @@ const DashboardPage: React.FC = () => {
           </Card>
         </div>
 
-        {/* Historique des analyses */}
+        {/* Colonne 2: Historique des analyses */}
         <div>
-          <Card>
-            <CardHeader>
-              <CardTitle>Historique des analyses</CardTitle>
-              <CardDescription>Liste de vos analyses récentes</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Fichier</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Statut</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filtered.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={3} className="text-muted-foreground text-sm">
-                        Aucun résultat pour la recherche.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    filtered.map((item) => (
-                      <TableRow
-                        key={item.id}
-                        className="cursor-pointer hover:bg-muted/40"
-                        onClick={() => navigate(`/analysis/${item.id}`)}
-                      >
-                        <TableCell className="font-medium">{item.filename}</TableCell>
-                        <TableCell>{item.date}</TableCell>
-                        <TableCell>
-                          <span
-                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                              item.status === 'completed'
-                                ? 'bg-green-100 text-green-800'
-                                : item.status === 'failed'
-                                ? 'bg-red-100 text-red-800'
-                                : 'bg-yellow-100 text-yellow-800'
-                            }`}
-                          >
-                            {item.status === 'completed'
-                              ? 'Terminé'
-                              : item.status === 'failed'
-                              ? 'Échoué'
-                              : 'En cours'}
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+          <div className="bg-white rounded-xl shadow-sm p-8">
+            {/* Header */}
+            <div className="flex items-center mb-6">
+              <div className="bg-purple-100 text-purple-600 p-3 rounded-full mr-4">
+                <History className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold">Historique des analyses</h3>
+                <p className="text-sm text-gray-600">Liste de vos analyses récentes</p>
+              </div>
+            </div>
+
+            {/* Search input */}
+            <div className="relative mb-4">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Input
+                value={searchTerm || ''}
+                onChange={() => { /* Read-only; provient du layout via Outlet context */ }}
+                placeholder="Rechercher..."
+                className="pl-9"
+                readOnly
+              />
+            </div>
+
+            {/* List */}
+            {filtered.length === 0 ? (
+              <p className="text-sm text-gray-500">Aucun résultat pour la recherche.</p>
+            ) : (
+              <ul className="divide-y divide-gray-200">
+                {filtered.map((item) => {
+                  const statusIcon = item.status === 'completed'
+                    ? <CheckCircle2 className="text-green-500" />
+                    : item.status === 'failed'
+                      ? <XCircle className="text-red-500" />
+                      : <Hourglass className="text-yellow-500" />
+
+                  const isProcessing = item.status === 'processing'
+
+                  return (
+                    <li key={item.id} className="flex items-center py-4 space-x-4">
+                      <div className="shrink-0">
+                        {statusIcon}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{item.filename}</p>
+                        <p className="text-xs text-gray-500">{item.date}</p>
+                      </div>
+                      {item.status === 'failed' ? (
+                        <a href="#" className="text-sm font-medium text-red-600 hover:text-red-700" onClick={(e) => { e.preventDefault(); navigate(`/analysis/${item.id}`) }}>Réessayer</a>
+                      ) : (
+                        <a href="#" className={`text-sm font-medium ${isProcessing ? 'text-gray-400 cursor-not-allowed' : 'text-blue-600 hover:text-blue-700'}`} onClick={(e) => { e.preventDefault(); if (!isProcessing) navigate(`/analysis/${item.id}`) }}>Voir</a>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+
+            {/* Footer link */}
+            <div className="mt-6">
+              <a href="/history" className="text-sm font-medium text-blue-600 hover:text-blue-700">Voir tout l'historique →</a>
+            </div>
+          </div>
         </div>
       </div>
     </div>
