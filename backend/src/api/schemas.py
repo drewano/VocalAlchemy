@@ -45,6 +45,8 @@ class AnalysisSummary(BaseModel):
     status: str
     created_at: datetime
     filename: str
+    transcript_snippet: Optional[str] = None
+    analysis_snippet: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -55,6 +57,13 @@ class AnalysisDetail(AnalysisSummary):
     latest_analysis: Optional[str]
     versions: list[AnalysisVersion]
     people_involved: Optional[str]
+
+class AnalysisListResponse(BaseModel):
+    items: list[AnalysisSummary]
+    total: int
+
+class AnalysisRename(BaseModel):
+    filename: str
 
 # Token schemas
 class Token(BaseModel):

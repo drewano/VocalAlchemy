@@ -110,6 +110,27 @@ class AnalysisService:
 
         return report_path
 
+    def delete_analysis(self, analysis_id: str, user_id: int) -> None:
+        analysis = self.analysis_repo.get_detailed_by_id(analysis_id)
+        if not analysis:
+            raise AnalysisNotFoundException(f"Analysis not found: {analysis_id}")
+        if analysis.user_id != user_id:
+            raise PermissionError('Access denied')
+
+        base_dir = None
+        if analysis.source_file_path:
+            try:
+                base_dir = os.path.dirname(analysis.source_file_path)
+            except Exception:
+                base_dir = None
+        if base_dir and os.path.exists(base_dir):
+            try:
+                shutil.rmtree(base_dir)
+            except FileNotFoundError:
+                pass
+
+        self.analysis_repo.delete(analysis_id)
+
     def rerun_analysis_from_transcript(self, analysis_id: str, transcript: str, new_prompt: Optional[str], base_output_dir: str) -> str:
         if not transcript or not isinstance(transcript, str):
             raise ValueError("Invalid transcript provided")

@@ -5,9 +5,10 @@ from src.infrastructure import sql_models as models
 
 
 class AnalysisRepository(BaseRepository):
-    def create(self, user_id: int, status: models.AnalysisStatus = models.AnalysisStatus.PENDING, source_file_path: str = "", prompt: Optional[str] = None) -> models.Analysis:
+    def create(self, user_id: int, filename: str, status: models.AnalysisStatus = models.AnalysisStatus.PENDING, source_file_path: str = "", prompt: Optional[str] = None) -> models.Analysis:
         analysis = models.Analysis(
             user_id=user_id,
+            filename=filename,
             status=status,
             source_file_path=source_file_path,
             prompt=prompt,
@@ -16,6 +17,22 @@ class AnalysisRepository(BaseRepository):
         self.db.commit()
         self.db.refresh(analysis)
         return analysis
+
+    def update_filename(self, analysis_id: str, new_filename: str) -> Optional[models.Analysis]:
+        analysis = self.get_by_id(analysis_id)
+        if not analysis:
+            return None
+        analysis.filename = new_filename
+        self.db.commit()
+        self.db.refresh(analysis)
+        return analysis
+
+    def delete(self, analysis_id: str) -> None:
+        analysis = self.get_by_id(analysis_id)
+        if not analysis:
+            return
+        self.db.delete(analysis)
+        self.db.commit()
 
     def get_by_id(self, analysis_id: str) -> Optional[models.Analysis]:
         return (
@@ -32,12 +49,21 @@ class AnalysisRepository(BaseRepository):
             .first()
         )
 
-    def list_by_user(self, user_id: int) -> List[models.Analysis]:
+    def list_by_user(self, user_id: int, skip: int = 0, limit: int = 100) -> List[models.Analysis]:
         return (
             self.db.query(models.Analysis)
             .filter(models.Analysis.user_id == user_id)
             .order_by(models.Analysis.created_at.desc())
+            .offset(skip)
+            .limit(limit)
             .all()
+        )
+
+    def count_by_user(self, user_id: int) -> int:
+        return (
+            self.db.query(models.Analysis)
+            .filter(models.Analysis.user_id == user_id)
+            .count()
         )
 
     def update_paths_and_status(self, analysis_id: str, *, status: Optional[models.AnalysisStatus] = None, result_path: Optional[str] = None, transcript_path: Optional[str] = None) -> None:

@@ -129,7 +129,7 @@ export function AppSidebar({ onSearchChange, ...props }: React.ComponentProps<ty
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-48">
                   <DropdownMenuItem asChild>
-                    <Link to="/profile">Profil</Link>
+                    <Link to="/settings">Profil</Link>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={logout}>

@@ -34,6 +34,7 @@ class Analysis(Base):
     status: Mapped[AnalysisStatus] = mapped_column(SAEnum(AnalysisStatus), nullable=False)
     error_message: Mapped[str] = mapped_column(String, nullable=True)
     progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    filename = Column(String, nullable=False)
     source_file_path = Column(String, nullable=False)
     result_path = Column(String, nullable=True)
     transcript_path = Column(String, nullable=True)

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, BackgroundTasks, Form
+from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, BackgroundTasks, Form, Body
 from fastapi.responses import FileResponse, PlainTextResponse
 import os
 import uuid
@@ -56,6 +56,7 @@ async def process_audio(
     # 1. Create analysis row with temporary path
     analysis = analysis_repo.create(
         user_id=current_user.id,
+        filename=file.filename or "uploaded_audio",
         status=models.AnalysisStatus.PENDING,
         source_file_path=file.filename or "uploaded_audio",
         prompt=prompt,
@@ -150,6 +151,22 @@ async def rerun_analysis(
     return {"message": "Rerun started", "analysis_id": analysis_id}
 
 
+@router.delete("/{analysis_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_analysis(
+    analysis_id: str,
+    current_user: models.User = Depends(get_current_user),
+    analysis_service: AnalysisService = Depends(get_analysis_service),
+):
+    try:
+        analysis_service.delete_analysis(analysis_id=analysis_id, user_id=current_user.id)
+    except AnalysisNotFoundException:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Access denied")
+    # 204 No Content
+    return
+
+
 @router.get("/status/{analysis_id}")
 async def get_status(
     analysis_id: str,
@@ -238,22 +255,87 @@ async def get_transcript(
     return FileResponse(analysis.transcript_path, media_type='text/plain', filename="transcription.txt")
 
 
-@router.get("/list")
-async def list_analyses(
+@router.get("/audio/{analysis_id}")
+async def get_original_audio(
+    analysis_id: str,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
 ):
-    items = analysis_repo.list_by_user(current_user.id)
-    return [
-        {
-            "id": a.id,
-            "status": a.status,
-            "created_at": a.created_at,
-            "filename": os.path.basename(a.source_file_path) if a.source_file_path else "",
-        }
-        for a in items
-    ]
+    analysis = analysis_repo.get_by_id(analysis_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    if analysis.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    source_path = analysis.source_file_path
+    if not source_path or not os.path.exists(source_path):
+        raise HTTPException(status_code=404, detail="Source audio file not found")
+
+    # Guess media type from extension; default to audio/mpeg
+    ext = os.path.splitext(source_path)[1].lower()
+    media_map = {
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
+        ".webm": "audio/webm",
+        ".opus": "audio/opus",
+    }
+    media_type = media_map.get(ext, "audio/mpeg")
+
+    return FileResponse(source_path, media_type=media_type, filename=os.path.basename(source_path))
+
+
+@router.get("/list")
+async def list_analyses(
+    skip: int = 0,
+    limit: int = 20,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+) -> schemas.AnalysisListResponse:
+    items = analysis_repo.list_by_user(current_user.id, skip=skip, limit=limit)
+    total = analysis_repo.count_by_user(current_user.id)
+
+    summaries: list[schemas.AnalysisSummary] = []
+    for a in items:
+        transcript_snippet: str | None = None
+        analysis_snippet: str | None = None
+
+        # Read first 200 chars of transcript if available
+        try:
+            if a.transcript_path and os.path.exists(a.transcript_path):
+                with open(a.transcript_path, "r", encoding="utf-8") as f:
+                    transcript_snippet = f.read(200)
+        except Exception:
+            transcript_snippet = None
+
+        # Read first 200 chars of analysis result if available
+        try:
+            if a.result_path and os.path.exists(a.result_path):
+                with open(a.result_path, "r", encoding="utf-8") as f:
+                    analysis_snippet = f.read(200)
+        except Exception:
+            analysis_snippet = None
+
+        summaries.append(
+            schemas.AnalysisSummary(
+                id=a.id,
+                status=a.status,
+                created_at=a.created_at,
+                filename=a.filename,
+                transcript_snippet=transcript_snippet,
+                analysis_snippet=analysis_snippet,
+            )
+        )
+
+    return schemas.AnalysisListResponse(
+        items=summaries,
+        total=total,
+    )
 
 
 @router.get("/{analysis_id}")
@@ -298,7 +380,7 @@ async def get_analysis_detail(
         id=a.id,
         status=a.status,
         created_at=a.created_at,
-        filename=os.path.basename(a.source_file_path) if a.source_file_path else "",
+        filename=a.filename,
         prompt=a.prompt,
         transcript=transcript_content,
         latest_analysis=latest_analysis_content or "",
@@ -312,4 +394,28 @@ async def get_analysis_detail(
             )
             for v in versions_sorted
         ],
+    )
+
+@router.patch("/{analysis_id}/rename", response_model=schemas.AnalysisSummary)
+async def rename_analysis(
+    analysis_id: str,
+    rename_data: schemas.AnalysisRename = Body(...),
+    current_user: models.User = Depends(get_current_user),
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+):
+    analysis = analysis_repo.get_by_id(analysis_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    if analysis.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    updated = analysis_repo.update_filename(analysis_id, rename_data.filename)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    return schemas.AnalysisSummary(
+        id=updated.id,
+        status=updated.status,
+        created_at=updated.created_at,
+        filename=os.path.basename(updated.source_file_path) if updated.source_file_path else "",
     )

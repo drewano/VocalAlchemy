@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { LoaderCircle } from 'lucide-react'
 import { useAnalysisDetail } from '@/hooks/useAnalysisDetail'
 import { StatusDisplay } from '@/components/StatusDisplay'
+import AudioPlayer from '@/components/AudioPlayer'
 
 const AnalysisDetailPage: React.FC = () => {
   const { analysisId } = useParams<{ analysisId: string }>()
@@ -83,6 +84,9 @@ const AnalysisDetailPage: React.FC = () => {
             <div>
               <div className="text-sm text-muted-foreground">Personnes concernées</div>
               <div className="font-medium whitespace-pre-wrap">{currentPeople || '—'}</div>
+            </div>
+            <div className="sm:col-span-3">
+              <AudioPlayer analysisId={analysisData.id} />
             </div>
           </div>
         </CardContent>

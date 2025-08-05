@@ -5,17 +5,32 @@ import { UploadForm } from '@/components/UploadForm'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
-import { useAnalysisHistory } from '@/hooks/useAnalysisHistory'
+import { usePaginatedAnalysisHistory } from '@/hooks/usePaginatedAnalysisHistory'
 import { usePrompts } from '@/hooks/usePrompts'
 import { History, Search, CheckCircle2, Hourglass, XCircle } from 'lucide-react'
+import { useAnalysisSubmit } from '@/hooks/useAnalysisSubmit'
+import { Button } from '@/components/ui/button'
+import { toast } from 'sonner'
 
 const DashboardPage: React.FC = () => {
-  const { history, isLoading, isSubmitting, submitNewAnalysis } = useAnalysisHistory()
+  const { analyses: history, isLoading, refresh } = usePaginatedAnalysisHistory(10)
   const { prompts, isLoading: isLoadingPrompts } = usePrompts()
   const { searchTerm } = useOutletContext<any>()
 
   const authContext = useContext(AuthContext)
   const navigate = useNavigate()
+  const { submitAnalysis, isSubmitting } = useAnalysisSubmit()
+
+  const handleAnalysisSubmit = async (file: File, prompt: string) => {
+    try {
+      const analysisId = await submitAnalysis(file, prompt)
+      toast.success("L'analyse a bien été lancée.")
+      refresh()
+      navigate(`/analysis/${analysisId}`)
+    } catch (error: any) {
+      toast.error("Échec de l'envoi : " + (error?.message || 'Erreur inconnue'))
+    }
+  }
 
   if (!authContext) {
     throw new Error('DashboardPage must be used within an AuthProvider')
@@ -47,7 +62,7 @@ const DashboardPage: React.FC = () => {
               ) : (
                 <UploadForm
                   prompts={prompts}
-                  onSubmit={submitNewAnalysis}
+                  onSubmit={handleAnalysisSubmit}
                   isLoading={isSubmitting}
                 />
               )}
@@ -102,12 +117,16 @@ const DashboardPage: React.FC = () => {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900 truncate">{item.filename}</p>
-                        <p className="text-xs text-gray-500">{item.date}</p>
+                        <p className="text-xs text-gray-500">{new Date(item.created_at).toLocaleString()}</p>
                       </div>
                       {item.status === 'failed' ? (
-                        <a href="#" className="text-sm font-medium text-red-600 hover:text-red-700" onClick={(e) => { e.preventDefault(); navigate(`/analysis/${item.id}`) }}>Réessayer</a>
+                        <Button variant="ghost" size="sm" onClick={() => navigate(`/analysis/${item.id}`)}>
+                          Réessayer
+                        </Button>
                       ) : (
-                        <a href="#" className={`text-sm font-medium ${isProcessing ? 'text-gray-400 cursor-not-allowed' : 'text-blue-600 hover:text-blue-700'}`} onClick={(e) => { e.preventDefault(); if (!isProcessing) navigate(`/analysis/${item.id}`) }}>Voir</a>
+                        <Button variant="ghost" size="sm" onClick={() => !isProcessing && navigate(`/analysis/${item.id}`)} disabled={isProcessing}>
+                          Voir
+                        </Button>
                       )}
                     </li>
                   )

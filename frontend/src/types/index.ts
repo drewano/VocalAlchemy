@@ -15,6 +15,8 @@ export type AnalysisSummary = {
   status: string
   created_at: string
   filename: string
+  transcript_snippet?: string
+  analysis_snippet?: string
 }
 
 export interface AnalysisVersion {
@@ -34,4 +36,9 @@ export interface AnalysisDetail {
   latest_analysis: string | null
   versions: AnalysisVersion[]
   people_involved: string | null
+}
+
+export interface AnalysisListResponse {
+  items: AnalysisSummary[]
+  total: number
 }

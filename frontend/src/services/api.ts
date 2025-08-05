@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { PredefinedPrompts, AnalysisSummary, AnalysisDetail } from '@/types'
+import type { PredefinedPrompts, AnalysisDetail, AnalysisListResponse } from '@/types'
 
 // Types locaux alignés avec AuthContext
 interface User {
@@ -94,8 +94,10 @@ export async function getResultFile(analysisId: string, type: 'result' | 'transc
   return response.data
 }
 
-export async function listAnalyses(): Promise<AnalysisSummary[]> {
-  const res = await api.get('/analysis/list')
+export async function listAnalyses({ page, pageSize }: { page: number; pageSize: number }): Promise<AnalysisListResponse> {
+  const skip = Math.max(0, (page - 1) * pageSize)
+  const limit = Math.max(1, pageSize)
+  const res = await api.get('/analysis/list', { params: { skip, limit } })
   return res.data
 }
 
@@ -113,6 +115,25 @@ export async function rerunAnalysis(analysisId: string, prompt: string): Promise
 
 export async function getVersionResult(versionId: string): Promise<string> {
   const res = await api.get(`/result/version/${versionId}`, { responseType: 'text' })
+  return res.data
+}
+
+export async function deleteAnalysis(analysisId: string): Promise<void> {
+  await api.delete(`/analysis/${analysisId}`)
+}
+
+export async function renameAnalysis(analysisId: string, newName: string): Promise<void> {
+  await api.patch(`/analysis/${analysisId}/rename`, { filename: newName })
+}
+
+// Fonction utilitaire pour construire l'URL du fichier audio (aucun appel axios)
+export function getAudioFileUrl(analysisId: string): string {
+  return `/api/analysis/audio/${analysisId}`
+}
+
+// Récupère le fichier audio (authentifié) en tant que Blob
+export async function getAudioFileBlob(analysisId: string): Promise<Blob> {
+  const res = await api.get(`/analysis/audio/${analysisId}`, { responseType: 'blob' })
   return res.data
 }
 
