@@ -1,8 +1,18 @@
 import * as React from "react"
+import { useContext } from "react"
 import { Link, useLocation } from "react-router-dom"
-import { LayoutDashboard, History, FileText, Lightbulb, Settings, User } from "lucide-react"
-import { useAnalysisHistory } from "@/hooks/useAnalysisHistory"
+import { LayoutDashboard, History, FileText, Lightbulb, Settings, PanelLeftIcon, LogOut } from "lucide-react"
+
 import { SearchForm } from "@/components/search-form"
+import logoUrl from "@/assets/logo.svg"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu"
 import {
   Sidebar,
   SidebarContent,
@@ -11,120 +21,123 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarMenuSkeleton,
+  useSidebar,
 } from "@/components/ui/sidebar"
+import AuthContext from "@/contexts/AuthContext"
 
-function truncate(text: string, max = 40) {
-  if (!text) return ""
-  return text.length > max ? text.slice(0, max) + "…" : text
-}
+// Items de navigation principale (basés sur router.tsx)
+const mainNavItems: Array<{ href: string; label: string; icon: React.ComponentType; tooltip: string }> = [
+  { href: '/', label: 'Tableau de bord', icon: LayoutDashboard, tooltip: 'Tableau de bord' },
+  { href: '/history', label: 'Historique', icon: History, tooltip: 'Historique des analyses' },
+  { href: '/documents', label: 'Documents', icon: FileText, tooltip: 'Gestion des documents' },
+  { href: '/prompts', label: 'Gérer les prompts', icon: Lightbulb, tooltip: 'Gérer les prompts' },
+]
 
 export function AppSidebar({ onSearchChange, ...props }: React.ComponentProps<typeof Sidebar> & { onSearchChange?: (term: string) => void }) {
-  const { history, isLoading } = useAnalysisHistory()
   const location = useLocation()
+  const { toggleSidebar, state } = useSidebar()
+  const { user, logout } = useContext(AuthContext) ?? {}
 
   return (
-    <Sidebar collapsible="offcanvas" {...props}>
+    <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild className="data-[slot=sidebar-menu-button]:!p-1.5">
-              <Link to="/">
-                <span className="text-base font-semibold">Audio Analyzer AI</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-        <SearchForm className="px-0" onSearchChange={onSearchChange} />
+        <div className="group flex items-center px-2 py-2 min-h-10">
+          {/* Left: Logo (expanded only) */}
+          <Link
+            to="/"
+            className="flex items-center gap-2 group-data-[collapsible=icon]:hidden"
+          >
+            <img
+              src={logoUrl}
+              alt="Logo"
+              className="size-6 transition-transform duration-200 group-hover:scale-[1.03]"
+            />
+          </Link>
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Right: Toggle (always visible) */}
+          <SidebarMenuButton
+            onClick={toggleSidebar}
+            tooltip="Réduire / Agrandir"
+            className="h-8 px-2 flex items-center justify-center gap-2 transition-all duration-200 group-data-[collapsible=icon]:translate-x-1 group-hover:translate-x-0 focus-visible:ring-2"
+          >
+            <PanelLeftIcon
+              className={`size-4 transition-transform duration-300 ${state === 'collapsed' ? 'rotate-180' : ''}`}
+            />
+            <span className="sr-only">{state === 'collapsed' ? 'Agrandir' : 'Réduire'}</span>
+          </SidebarMenuButton>
+        </div>
+        <div className="group-data-[collapsible=icon]:hidden">
+          <SearchForm className="px-0" onSearchChange={onSearchChange} />
+        </div>
       </SidebarHeader>
       <SidebarContent>
         {/* Nav principale */}
         <nav className="px-2 py-2">
           <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild className={location.pathname === '/' ? 'bg-gray-100' : undefined}>
-                <Link to="/">
-                  <LayoutDashboard />
-                  <span>Tableau de bord</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild>
-                <Link to="/history">
-                  <History />
-                  <span>Historique</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild>
-                <Link to="/documents">
-                  <FileText />
-                  <span>Documents</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild>
-                <Link to="/prompts">
-                  <Lightbulb />
-                  <span>Gérer les prompts</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+            {mainNavItems.map(({ href, label, icon: Icon, tooltip }) => (
+              <SidebarMenuItem key={href}>
+                <SidebarMenuButton
+                  asChild
+                  tooltip={tooltip}
+                  isActive={location.pathname === href}
+                  className="h-8 px-2 [&>svg]:size-4"
+                >
+                  <Link to={href}>
+                    <Icon />
+                    <span>{label}</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ))}
           </SidebarMenu>
         </nav>
-
-        <div className="border-t my-2" />
-
-        {/* Historique listé (conservé) */}
-        <SidebarGroup>
-          <SidebarGroupLabel>Historique</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {isLoading ? (
-                Array.from({ length: 4 }).map((_, idx) => (
-                  <SidebarMenuSkeleton key={idx} />
-                ))
-              ) : (
-                history.map((item) => (
-                  <SidebarMenuItem key={item.id}>
-                    <SidebarMenuButton asChild>
-                      <Link to={`/analysis/${item.id}`} title={item.filename}>
-                        <span>{truncate(item.filename)}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))
-              )}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
       </SidebarContent>
 
       <SidebarFooter>
         <div className="border-t" />
         <nav className="px-2 py-2">
           <SidebarMenu>
+            {/* Paramètres */}
             <SidebarMenuItem>
-              <SidebarMenuButton asChild>
-                <Link to="/settings">
+              <SidebarMenuButton asChild tooltip="Paramètres" className="h-8 px-2 [&>svg]:size-4">
+                <Link to="/settings" className="flex items-center gap-2">
                   <Settings />
-                  <span>Paramètres</span>
+                  <span className="group-data-[collapsible=icon]:hidden">Paramètres</span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
+
+            {/* Profil utilisateur avec menu */}
             <SidebarMenuItem>
-              <SidebarMenuButton asChild>
-                <Link to="/profile">
-                  <User />
-                  <span>Profil</span>
-                </Link>
-              </SidebarMenuButton>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <SidebarMenuButton className="h-8 px-2 [&>svg]:size-4" disabled={!user}>
+                    <div className="flex items-center gap-2">
+                      <Avatar>
+                        <AvatarFallback>
+                          {user?.email ? user.email.split('@')[0].slice(0, 2).toUpperCase() : '??'}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className="group-data-[collapsible=icon]:hidden">
+                        {user?.email ?? ''}
+                      </span>
+                    </div>
+                  </SidebarMenuButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-48">
+                  <DropdownMenuItem asChild>
+                    <Link to="/profile">Profil</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={logout}>
+                    <LogOut />
+                    <span>Se déconnecter</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </SidebarMenuItem>
           </SidebarMenu>
         </nav>
