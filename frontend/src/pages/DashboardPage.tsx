@@ -1,5 +1,5 @@
 import React, { useContext } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useOutletContext } from 'react-router-dom'
 import AuthContext from '@/contexts/AuthContext'
 import { UploadForm } from '@/components/UploadForm'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
@@ -11,6 +11,7 @@ import { usePrompts } from '@/hooks/usePrompts'
 const DashboardPage: React.FC = () => {
   const { history, isLoading, isSubmitting, submitNewAnalysis } = useAnalysisHistory()
   const { prompts, isLoading: isLoadingPrompts } = usePrompts()
+  const { searchTerm } = useOutletContext<any>()
 
   const authContext = useContext(AuthContext)
   const navigate = useNavigate()
@@ -19,7 +20,9 @@ const DashboardPage: React.FC = () => {
     throw new Error('DashboardPage must be used within an AuthProvider')
   }
 
-  // Profil/déconnexion gérés via /profile, pas d'usage ici
+  const filtered = history.filter((h) =>
+    !searchTerm ? true : h.filename.toLowerCase().includes(String(searchTerm).toLowerCase())
+  )
 
   return (
     <div className="container mx-auto py-8">
@@ -73,33 +76,41 @@ const DashboardPage: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {history.map((item) => (
-                    <TableRow
-                      key={item.id}
-                      className="cursor-pointer hover:bg-muted/40"
-                      onClick={() => navigate(`/analysis/${item.id}`)}
-                    >
-                      <TableCell className="font-medium">{item.filename}</TableCell>
-                      <TableCell>{item.date}</TableCell>
-                      <TableCell>
-                        <span
-                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                            item.status === 'completed'
-                              ? 'bg-green-100 text-green-800'
-                              : item.status === 'failed'
-                              ? 'bg-red-100 text-red-800'
-                              : 'bg-yellow-100 text-yellow-800'
-                          }`}
-                        >
-                          {item.status === 'completed'
-                            ? 'Terminé'
-                            : item.status === 'failed'
-                            ? 'Échoué'
-                            : 'En cours'}
-                        </span>
+                  {filtered.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={3} className="text-muted-foreground text-sm">
+                        Aucun résultat pour la recherche.
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    filtered.map((item) => (
+                      <TableRow
+                        key={item.id}
+                        className="cursor-pointer hover:bg-muted/40"
+                        onClick={() => navigate(`/analysis/${item.id}`)}
+                      >
+                        <TableCell className="font-medium">{item.filename}</TableCell>
+                        <TableCell>{item.date}</TableCell>
+                        <TableCell>
+                          <span
+                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                              item.status === 'completed'
+                                ? 'bg-green-100 text-green-800'
+                                : item.status === 'failed'
+                                ? 'bg-red-100 text-red-800'
+                                : 'bg-yellow-100 text-yellow-800'
+                            }`}
+                          >
+                            {item.status === 'completed'
+                              ? 'Terminé'
+                              : item.status === 'failed'
+                              ? 'Échoué'
+                              : 'En cours'}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>

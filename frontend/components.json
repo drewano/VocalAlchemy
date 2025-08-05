@@ -6,7 +6,7 @@
   "tailwind": {
     "config": "",
     "css": "src/App.css",
-    "baseColor": "green",
+    "baseColor": "slate",
     "cssVariables": true,
     "prefix": ""
   },

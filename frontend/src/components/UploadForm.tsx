@@ -68,9 +68,9 @@ export function UploadForm({ prompts, onSubmit, isLoading }: UploadFormProps) {
                 <SelectValue placeholder="Sélectionnez un type d'analyse" />
               </SelectTrigger>
               <SelectContent>
-                {Object.keys(prompts).map((promptKey) => (
-                  <SelectItem key={promptKey} value={prompts[promptKey]}>
-                    {promptKey}
+                {Object.entries(prompts).map(([name, content]) => (
+                  <SelectItem key={name} value={content}>
+                    {name}
                   </SelectItem>
                 ))}
               </SelectContent>

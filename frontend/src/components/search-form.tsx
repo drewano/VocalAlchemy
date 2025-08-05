@@ -7,7 +7,7 @@ import {
   SidebarInput,
 } from "@/components/ui/sidebar"
 
-export function SearchForm({ ...props }: React.ComponentProps<"form">) {
+export function SearchForm({ onSearchChange, ...props }: React.ComponentProps<"form"> & { onSearchChange?: (term: string) => void }) {
   return (
     <form {...props}>
       <SidebarGroup className="py-0">
@@ -17,8 +17,9 @@ export function SearchForm({ ...props }: React.ComponentProps<"form">) {
           </Label>
           <SidebarInput
             id="search"
-            placeholder="Search the docs..."
+            placeholder="Rechercher des analyses..."
             className="pl-8"
+            onChange={(e) => onSearchChange?.(e.target.value)}
           />
           <Search className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 opacity-50 select-none" />
         </SidebarGroupContent>

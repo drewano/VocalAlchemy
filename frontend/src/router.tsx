@@ -8,6 +8,7 @@ import ProfilePage from './pages/ProfilePage'
 import ProtectedRoute from './routes/ProtectedRoute'
 import AnalysisDetailPage from './pages/AnalysisDetailPage'
 import DashboardLayout from './layouts/DashboardLayout'
+import PromptsPage from './pages/PromptsPage'
 
 const router = createBrowserRouter([
   {
@@ -45,6 +46,10 @@ const router = createBrowserRouter([
           {
             path: 'analysis/:analysisId',
             element: <AnalysisDetailPage />,
+          },
+          {
+            path: 'prompts',
+            element: <PromptsPage />,
           },
         ],
       },

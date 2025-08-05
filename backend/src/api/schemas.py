@@ -14,6 +14,21 @@ class User(BaseModel):
     class Config:
         from_attributes = True
 
+# User Prompt schemas
+class UserPromptBase(BaseModel):
+    name: str
+    content: str
+
+class UserPromptCreate(UserPromptBase):
+    pass
+
+class UserPrompt(UserPromptBase):
+    id: int
+    user_id: int
+
+    class Config:
+        from_attributes = True
+
 # Analysis Version schema
 class AnalysisVersion(BaseModel):
     id: str

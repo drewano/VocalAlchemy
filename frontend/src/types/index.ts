@@ -4,6 +4,12 @@ export interface PredefinedPrompts {
   [key: string]: string
 }
 
+export interface UserPrompt {
+  id: number
+  name: string
+  content: string
+}
+
 export type AnalysisSummary = {
   id: string
   status: string
