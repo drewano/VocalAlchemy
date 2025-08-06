@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum as SAEnum
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.sql import func
+from sqlalchemy.types import JSON
 import uuid
 import enum
 
@@ -54,6 +55,7 @@ class AnalysisVersion(Base):
     prompt_used = Column(String, nullable=False)
     result_path = Column(String, nullable=False)
     people_involved = Column(String, nullable=True)
+    structured_plan = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationship

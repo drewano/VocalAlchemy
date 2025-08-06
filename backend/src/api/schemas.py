@@ -57,6 +57,7 @@ class AnalysisDetail(AnalysisSummary):
     latest_analysis: Optional[str]
     versions: list[AnalysisVersion]
     people_involved: Optional[str]
+    action_plan: Optional[list] = None
 
 class AnalysisListResponse(BaseModel):
     items: list[AnalysisSummary]

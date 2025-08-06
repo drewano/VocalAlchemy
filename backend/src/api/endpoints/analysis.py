@@ -366,6 +366,7 @@ async def get_analysis_detail(
     # Latest analysis content and people involved
     latest_analysis_content = ""
     people_involved = None
+    action_plan = None
     if versions_sorted:
         latest_version = versions_sorted[0]
         if latest_version.result_path and os.path.exists(latest_version.result_path):
@@ -375,6 +376,18 @@ async def get_analysis_detail(
             except Exception:
                 latest_analysis_content = ""
         people_involved = latest_version.people_involved
+        # Extract structured plan if available
+        try:
+            if latest_version.structured_plan is not None:
+                # Expecting dict like {"extractions": [...]} or already a list
+                if isinstance(latest_version.structured_plan, dict) and "extractions" in latest_version.structured_plan:
+                    action_plan = latest_version.structured_plan.get("extractions")
+                elif isinstance(latest_version.structured_plan, list):
+                    action_plan = latest_version.structured_plan
+                else:
+                    action_plan = latest_version.structured_plan
+        except Exception:
+            action_plan = None
 
     return schemas.AnalysisDetail(
         id=a.id,
@@ -385,6 +398,7 @@ async def get_analysis_detail(
         transcript=transcript_content,
         latest_analysis=latest_analysis_content or "",
         people_involved=people_involved,
+        action_plan=action_plan,
         versions=[
             schemas.AnalysisVersion(
                 id=v.id,

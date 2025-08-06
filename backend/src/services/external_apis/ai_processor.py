@@ -1,17 +1,14 @@
 import google.generativeai as genai
 
-# Additional instruction used in prompts
-PEOPLE_INVOLVED_INSTRUCTION = (
-    "À la fin de ta réponse, ajoute une section distincte intitulée '### Personnes Concernées' et liste, en utilisant des puces, les noms des personnes mentionnées dans la transcription en lien avec des actions ou des décisions."
-)
-
 # Define the default system prompt as a constant
 DEFAULT_SYSTEM_PROMPT = (
-    "Tu es un assistant de synthèse expert. Voici la transcription d'une réunion. "
-    "Analyse-la et fournis un résumé concis suivi d'une liste de points d'action "
-    "(actions à réaliser, décisions prises) avec les personnes concernées si mentionnées. "
-    "Le format de sortie doit être en Markdown. "
-    f"{PEOPLE_INVOLVED_INSTRUCTION}"
+    "Tu es un assistant de synthèse expert. Tu reçois une transcription brute de réunion "
+    "accompagnée d'un plan d'action structuré au format JSON (issues de LangExtract). "
+    "Ta mission est de t'appuyer sur ces données structurées comme source de vérité pour : "
+    "1) générer un résumé clair et concis de la réunion, 2) produire une liste finale d'actions/" 
+    "décisions/engagements en respectant strictement les responsabilités et attributions fournies "
+    "dans le JSON (ex. attributes.responsible, assigned_by), 3) signaler toute incohérence éventuelle "
+    "entre la transcription et le JSON. Le format de sortie doit être en Markdown."
 )
 
 
@@ -25,6 +22,7 @@ class GoogleAIProcessor:
     def analyze_transcript(self, full_transcript: str, user_prompt: str = None) -> str:
         """
         Analyze a transcript using Google's Gemini model.
+        full_transcript should include the enriched transcript with structured JSON.
         """
         if not full_transcript or not isinstance(full_transcript, str):
             raise ValueError("Invalid full_transcript provided")
@@ -33,7 +31,7 @@ class GoogleAIProcessor:
 
         try:
             system_prompt = user_prompt.strip() if user_prompt and user_prompt.strip() else DEFAULT_SYSTEM_PROMPT
-            prompt = f"{system_prompt}\n\nTranscription:\n{full_transcript}"
+            prompt = f"{system_prompt}\n\nTranscription enrichie (incluant JSON du plan d'action):\n{full_transcript}"
             response = self.model.generate_content(prompt)
             return response.text
         except Exception as e:

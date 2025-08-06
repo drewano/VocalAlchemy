@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session, joinedload
 from src.infrastructure.repositories.base_repository import BaseRepository
 from src.infrastructure import sql_models as models
@@ -88,12 +88,13 @@ class AnalysisRepository(BaseRepository):
         analysis.progress = max(0, min(100, int(progress)))
         self.db.commit()
 
-    def add_version(self, analysis_id: str, prompt_used: str, result_path: str, people_involved: Optional[str] = None) -> models.AnalysisVersion:
+    def add_version(self, analysis_id: str, prompt_used: str, result_path: str, people_involved: Optional[str] = None, structured_plan: Optional[dict] = None) -> models.AnalysisVersion:
         version = models.AnalysisVersion(
             analysis_id=analysis_id,
             prompt_used=prompt_used,
             result_path=result_path,
             people_involved=people_involved,
+            structured_plan=structured_plan,
         )
         self.db.add(version)
         self.db.commit()
