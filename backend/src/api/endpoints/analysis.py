@@ -12,7 +12,7 @@ from src.auth import get_current_user
 from src.infrastructure.repositories.analysis_repository import AnalysisRepository
 from src.services.analysis_service import AnalysisService, AnalysisNotFoundException
 from src.services.audio_splitter import split_audio
-from src.services.external_apis.gladia_client import GladiaClient
+from src.services.external_apis.azure_speech_client import AzureSpeechClient
 from src.services.external_apis.ai_processor import GoogleAIProcessor
 from src.config import settings
 
@@ -23,8 +23,8 @@ def get_analysis_repository(db: Session = Depends(get_db)) -> AnalysisRepository
 
 # External clients dependencies
 
-def get_transcriber() -> GladiaClient:
-    return GladiaClient(api_key=settings.GLADIA_API_KEY)
+def get_transcriber() -> AzureSpeechClient:
+    return AzureSpeechClient(api_key=settings.AZURE_SPEECH_KEY, region=settings.AZURE_SPEECH_REGION)
 
 
 def get_ai_analyzer() -> GoogleAIProcessor:
@@ -33,7 +33,7 @@ def get_ai_analyzer() -> GoogleAIProcessor:
 
 def get_analysis_service(
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
-    transcriber: GladiaClient = Depends(get_transcriber),
+    transcriber: AzureSpeechClient = Depends(get_transcriber),
     ai_analyzer: GoogleAIProcessor = Depends(get_ai_analyzer),
 ) -> AnalysisService:
     return AnalysisService(

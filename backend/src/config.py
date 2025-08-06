@@ -5,7 +5,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # API keys
-    GLADIA_API_KEY: constr(strip_whitespace=True, min_length=1)
+    AZURE_SPEECH_KEY: constr(strip_whitespace=True, min_length=1)
+    AZURE_SPEECH_REGION: constr(strip_whitespace=True, min_length=1)
     GOOGLE_API_KEY: constr(strip_whitespace=True, min_length=1)
 
     # Database

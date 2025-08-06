@@ -2,13 +2,15 @@ import os
 import shutil
 import concurrent.futures
 import json
+import logging
 from typing import Optional, Protocol, List
 
+from langextract.resolver import ResolverParsingError
 from src.infrastructure.repositories.analysis_repository import AnalysisRepository
-from src.services.external_apis.gladia_client import GladiaClient
+from src.services.external_apis.azure_speech_client import AzureSpeechClient
 from src.services.external_apis.ai_processor import GoogleAIProcessor
 from src.infrastructure.sql_models import AnalysisStatus
-from backend.src.services.transcript_analyzer import TranscriptAnalyzer
+from src.services.transcript_analyzer import TranscriptAnalyzer
 
 
 class AnalysisNotFoundException(Exception):
@@ -41,7 +43,7 @@ class AnalysisService:
     ) -> None:
         self.analysis_repo = analysis_repo
         self.audio_splitter = audio_splitter
-        self.gladia_client = transcriber
+        self.transcriber = transcriber
         self.google_ai = ai_analyzer
         self.transcript_analyzer = TranscriptAnalyzer()
 
@@ -62,6 +64,33 @@ class AnalysisService:
     def _write_text_file(self, path: str, content: str) -> None:
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
+
+    def _process_transcript_and_create_version(self, analysis_id: str, transcript: str, prompt: Optional[str], base_output_dir: str) -> str:
+        # Structured plan extraction with LangExtract
+        try:
+            structured_plan = self.transcript_analyzer.extract_action_plan(transcript)
+        except ResolverParsingError as e:
+            logging.error(f"Failed to parse action plan for analysis {analysis_id}: {e}")
+            raise
+
+        enriched_transcript = transcript + "\n\n" + json.dumps({"action_plan": structured_plan}, ensure_ascii=False)
+        analysis_result = self.google_ai.analyze_transcript(enriched_transcript, prompt)
+
+        # Pick filename (versioned when used in rerun)
+        filename = "report.txt" if prompt is None else f"report_{int(__import__('time').time())}.txt"
+        report_path = os.path.join(base_output_dir, filename)
+        self._write_text_file(report_path, analysis_result)
+
+        people_involved = self._extract_people_involved(analysis_result)
+        structured_plan_dict = structured_plan if isinstance(structured_plan, dict) else {}
+        self.analysis_repo.add_version(
+            analysis_id=analysis_id,
+            prompt_used=prompt or "",
+            result_path=report_path,
+            people_involved=people_involved,
+            structured_plan=structured_plan_dict,
+        )
+        return report_path
 
     def run_full_pipeline(self, analysis_id: str, source_path: str, base_output_dir: str, user_prompt: Optional[str] = None) -> str:
         if not source_path or not isinstance(source_path, str):
@@ -84,7 +113,7 @@ class AnalysisService:
 
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future_to_index = {
-                    executor.submit(self.gladia_client.transcribe_audio_chunk, segment_paths[idx]): idx
+                    executor.submit(self.transcriber.transcribe_audio_chunk, segment_paths[idx]): idx
                     for idx in range(total_chunks)
                 }
 
@@ -105,26 +134,12 @@ class AnalysisService:
             transcript_path = os.path.join(base_output_dir, "transcription.txt")
             self._write_text_file(transcript_path, full_text)
 
-            # Structured plan extraction with LangExtract
-            structured_plan = self.transcript_analyzer.extract_action_plan(full_text)
-            enriched_transcript = full_text + "\n\n" + json.dumps({"action_plan": structured_plan}, ensure_ascii=False)
-
-            # Analyze
-            analysis_result = self.google_ai.analyze_transcript(enriched_transcript, user_prompt)
-
-            # Save report
-            report_path = os.path.join(base_output_dir, "report.txt")
-            self._write_text_file(report_path, analysis_result)
-
-            people_involved = self._extract_people_involved(analysis_result)
-            # Ensure structured_plan is a JSON-serializable dict
-            structured_plan_dict = structured_plan if isinstance(structured_plan, dict) else {}
-            self.analysis_repo.add_version(
+            # Process transcript and create version
+            report_path = self._process_transcript_and_create_version(
                 analysis_id=analysis_id,
-                prompt_used=user_prompt or "",
-                result_path=report_path,
-                people_involved=people_involved,
-                structured_plan=structured_plan_dict,
+                transcript=full_text,
+                prompt=user_prompt,
+                base_output_dir=base_output_dir,
             )
 
             # Finish
@@ -176,26 +191,16 @@ class AnalysisService:
             raise ValueError("Invalid base_output_dir provided")
 
         self.analysis_repo.update_status(analysis_id, AnalysisStatus.PROCESSING)
-        # Structured plan extraction with LangExtract
-        structured_plan = self.transcript_analyzer.extract_action_plan(transcript)
-        enriched_transcript = transcript + "\n\n" + json.dumps({"action_plan": structured_plan}, ensure_ascii=False)
 
-        analysis_result = self.google_ai.analyze_transcript(enriched_transcript, new_prompt)
-
-        ts = str(int(__import__("time").time()))
-        report_path = os.path.join(base_output_dir, f"report_{ts}.txt")
-        self._write_text_file(report_path, analysis_result)
-
-        people_involved = self._extract_people_involved(analysis_result)
-        # Ensure structured_plan is a JSON-serializable dict
-        structured_plan_dict = structured_plan if isinstance(structured_plan, dict) else {}
-        self.analysis_repo.add_version(
+        report_path = self._process_transcript_and_create_version(
             analysis_id=analysis_id,
-            prompt_used=new_prompt or "",
-            result_path=report_path,
-            people_involved=people_involved,
-            structured_plan=structured_plan_dict,
+            transcript=transcript,
+            prompt=new_prompt,
+            base_output_dir=base_output_dir,
         )
+
+        if not report_path:
+            return ""
 
         self.analysis_repo.update_status(analysis_id, AnalysisStatus.COMPLETED)
         self.analysis_repo.update_progress(analysis_id, 100)

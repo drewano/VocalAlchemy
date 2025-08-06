@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useCallback, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import type { AnalysisVersion } from '@/types'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -9,6 +9,7 @@ import { LoaderCircle } from 'lucide-react'
 import { useAnalysisDetail } from '@/hooks/useAnalysisDetail'
 import { StatusDisplay } from '@/components/StatusDisplay'
 import AudioPlayer from '@/components/AudioPlayer'
+import ActionPlanTable from '@/components/ActionPlanTable'
 
 const AnalysisDetailPage: React.FC = () => {
   const { analysisId } = useParams<{ analysisId: string }>()
@@ -23,7 +24,38 @@ const AnalysisDetailPage: React.FC = () => {
     setCurrentPrompt,
     rerunAnalysis,
     selectVersion,
+    actionPlan,
   } = useAnalysisDetail(analysisId)
+
+  const transcriptRef = useRef<HTMLElement | null>(null)
+
+  const handleActionItemClick = useCallback((interval: { start: number; end: number }) => {
+    if (!transcriptRef.current || !analysisData?.transcript) return
+
+    // Clear previous highlight by resetting to raw text first
+    const codeEl = transcriptRef.current as HTMLElement
+
+    // Always start from the raw transcript to avoid nesting spans
+    const rawText = analysisData.transcript
+
+    const start = Math.max(0, Math.min(interval.start, rawText.length))
+    const end = Math.max(start, Math.min(interval.end, rawText.length))
+
+    const before = rawText.slice(0, start)
+    const middle = rawText.slice(start, end)
+    const after = rawText.slice(end)
+
+    const escapeHtml = (s: string) => s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+
+    const newHtml = `${escapeHtml(before)}<span class="highlighted-text" id="highlighted-span">${escapeHtml(middle)}</span>${escapeHtml(after)}`
+
+    codeEl.innerHTML = newHtml
+
+    document.getElementById('highlighted-span')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [analysisData?.transcript])
 
   if (isLoading) {
     return (
@@ -92,6 +124,8 @@ const AnalysisDetailPage: React.FC = () => {
         </CardContent>
       </Card>
 
+      <ActionPlanTable actionPlan={actionPlan} onItemClick={handleActionItemClick} />
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Panneau de gauche: Transcription */}
         <Card>
@@ -100,7 +134,7 @@ const AnalysisDetailPage: React.FC = () => {
           </CardHeader>
           <CardContent>
             <pre className="bg-muted/50 p-4 rounded-lg max-h-[70vh] overflow-y-auto">
-              <code className="whitespace-pre-wrap">{analysisData.transcript}</code>
+              <code ref={transcriptRef as any} className="whitespace-pre-wrap">{analysisData.transcript}</code>
             </pre>
           </CardContent>
         </Card>

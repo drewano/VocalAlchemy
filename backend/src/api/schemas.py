@@ -39,6 +39,20 @@ class AnalysisVersion(BaseModel):
     class Config:
         from_attributes = True
 
+# Action Plan schemas
+class ActionPlanItemAttributes(BaseModel):
+    topic: Optional[str] = None
+    responsible: Optional[str] = None
+    assigned_by: Optional[str] = None
+    participants: Optional[list[str]] = None
+    deadline: Optional[str] = None
+
+class ActionPlanItem(BaseModel):
+    extraction_class: str
+    extraction_text: str
+    attributes: ActionPlanItemAttributes
+    char_interval: Optional[dict] = None
+
 # Analysis schemas
 class AnalysisSummary(BaseModel):
     id: str
@@ -57,7 +71,7 @@ class AnalysisDetail(AnalysisSummary):
     latest_analysis: Optional[str]
     versions: list[AnalysisVersion]
     people_involved: Optional[str]
-    action_plan: Optional[list] = None
+    action_plan: Optional[list[ActionPlanItem]] = None
 
 class AnalysisListResponse(BaseModel):
     items: list[AnalysisSummary]

@@ -26,6 +26,21 @@ export interface AnalysisVersion {
   people_involved: string | null
 }
 
+export interface ActionPlanItemAttributes {
+  topic?: string
+  responsible?: string
+  assigned_by?: string
+  participants?: string[]
+  deadline?: string
+}
+
+export interface ActionPlanItem {
+  extraction_class: string
+  extraction_text: string
+  attributes: ActionPlanItemAttributes
+  char_interval?: { start: number; end: number } | null
+}
+
 export interface AnalysisDetail {
   id: string
   status: string
@@ -36,6 +51,7 @@ export interface AnalysisDetail {
   latest_analysis: string | null
   versions: AnalysisVersion[]
   people_involved: string | null
+  action_plan?: ActionPlanItem[] | null
 }
 
 export interface AnalysisListResponse {

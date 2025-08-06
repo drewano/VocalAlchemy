@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import * as api from '@/services/api'
-import type { AnalysisDetail, AnalysisVersion } from '@/types'
+import type { AnalysisDetail, AnalysisVersion, ActionPlanItem } from '@/types'
 
 export function useAnalysisDetail(analysisId?: string) {
   const [analysisData, setAnalysisData] = useState<AnalysisDetail | null>(null)
   const [currentPrompt, setCurrentPrompt] = useState<string>('')
   const [currentAnalysis, setCurrentAnalysis] = useState<string>('')
   const [currentPeople, setCurrentPeople] = useState<string>('')
+  const [actionPlan, setActionPlan] = useState<ActionPlanItem[] | null>(null)
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [isRerunning, setIsRerunning] = useState<boolean>(false)
   const [error, setError] = useState<{ message: string; status: number } | null>(null)
@@ -26,6 +27,7 @@ export function useAnalysisDetail(analysisId?: string) {
             setCurrentPrompt(fresh.prompt || '')
             setCurrentAnalysis(fresh.latest_analysis || 'Aucune analyse disponible.')
             setCurrentPeople(fresh.people_involved || 'Non spécifié')
+            setActionPlan(fresh.action_plan || null)
           } else {
             // FAILED: only update status if we already have some data
             setAnalysisData((prev) => (prev ? { ...prev, status: 'FAILED' as any } : prev))
@@ -51,6 +53,7 @@ export function useAnalysisDetail(analysisId?: string) {
         setCurrentPrompt(data.prompt || '')
         setCurrentAnalysis(data.latest_analysis || 'Aucune analyse disponible.')
         setCurrentPeople(data.people_involved || 'Non spécifié')
+        setActionPlan(data.action_plan || null)
         if (data.status === 'PROCESSING' || data.status === 'PENDING') {
           timeoutId = setTimeout(pollStatus, 3000)
         }
@@ -78,6 +81,7 @@ export function useAnalysisDetail(analysisId?: string) {
       setAnalysisData(data)
       setCurrentAnalysis(data.latest_analysis || 'Aucune analyse disponible.')
       setCurrentPeople(data.people_involved || 'Non spécifié')
+      setActionPlan(data.action_plan || null)
     } catch (e: any) {
       setError(e)
       console.error('Failed to rerun analysis', e)
@@ -109,5 +113,6 @@ export function useAnalysisDetail(analysisId?: string) {
     setCurrentPrompt,
     rerunAnalysis,
     selectVersion,
+    actionPlan,
   }
 }
