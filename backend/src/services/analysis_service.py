@@ -1,5 +1,6 @@
 import os
 import shutil
+import concurrent.futures
 from typing import Optional, Protocol, List
 
 from src.infrastructure.repositories.analysis_repository import AnalysisRepository
@@ -67,48 +68,75 @@ class AnalysisService:
         if not os.path.exists(source_path):
             raise FileNotFoundError(f"Source file not found: {source_path}")
 
-        segments_dir = self._prepare_segments_dir(base_output_dir)
+        try:
+            segments_dir = self._prepare_segments_dir(base_output_dir)
 
-        # Update status and split audio
-        self.analysis_repo.update_status(analysis_id, AnalysisStatus.PROCESSING)
-        segment_paths = self.audio_splitter(source_path, segments_dir)
+            # Update status and split audio
+            self.analysis_repo.update_status(analysis_id, AnalysisStatus.PROCESSING)
+            segment_paths = self.audio_splitter(source_path, segments_dir)
 
-        # Transcribe
-        transcriptions: List[str] = []
-        total_chunks = len(segment_paths)
-        for i, segment_path in enumerate(segment_paths):
-            self.analysis_repo.update_progress(analysis_id, int((i / max(total_chunks, 1)) * 100))
-            transcription = self.gladia_client.transcribe_audio_chunk(segment_path)
-            transcriptions.append(transcription)
+            # Transcribe in parallel
+            total_chunks = len(segment_paths)
+            transcriptions: List[Optional[str]] = [None] * total_chunks
 
-        full_text = "\n".join(transcriptions)
-        transcript_path = os.path.join(base_output_dir, "transcription.txt")
-        self._write_text_file(transcript_path, full_text)
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_to_index = {
+                    executor.submit(self.gladia_client.transcribe_audio_chunk, segment_paths[idx]): idx
+                    for idx in range(total_chunks)
+                }
 
-        # Analyze
-        analysis_result = self.google_ai.analyze_transcript(full_text, user_prompt)
+                completed = 0
+                for future in concurrent.futures.as_completed(future_to_index):
+                    idx = future_to_index[future]
+                    try:
+                        transcriptions[idx] = future.result()
+                    except Exception as e:
+                        transcriptions[idx] = ""
+                        # propagate error to be caught by outer try/except
+                        raise e
+                    finally:
+                        completed += 1
+                        self.analysis_repo.update_progress(analysis_id, int((completed / max(total_chunks, 1)) * 100))
 
-        # Save report
-        report_path = os.path.join(base_output_dir, "report.txt")
-        self._write_text_file(report_path, analysis_result)
+            full_text = "\n".join(t for t in transcriptions if t)
+            transcript_path = os.path.join(base_output_dir, "transcription.txt")
+            self._write_text_file(transcript_path, full_text)
 
-        people_involved = self._extract_people_involved(analysis_result)
-        self.analysis_repo.add_version(
-            analysis_id=analysis_id,
-            prompt_used=user_prompt or "",
-            result_path=report_path,
-            people_involved=people_involved,
-        )
+            # Analyze
+            analysis_result = self.google_ai.analyze_transcript(full_text, user_prompt)
 
-        # Finish
-        self.analysis_repo.update_paths_and_status(analysis_id, status=AnalysisStatus.COMPLETED, transcript_path=transcript_path)
-        self.analysis_repo.update_progress(analysis_id, 100)
+            # Save report
+            report_path = os.path.join(base_output_dir, "report.txt")
+            self._write_text_file(report_path, analysis_result)
 
-        # Cleanup
-        if os.path.exists(segments_dir):
-            shutil.rmtree(segments_dir)
+            people_involved = self._extract_people_involved(analysis_result)
+            self.analysis_repo.add_version(
+                analysis_id=analysis_id,
+                prompt_used=user_prompt or "",
+                result_path=report_path,
+                people_involved=people_involved,
+            )
 
-        return report_path
+            # Finish
+            self.analysis_repo.update_paths_and_status(analysis_id, status=AnalysisStatus.COMPLETED, transcript_path=transcript_path)
+            self.analysis_repo.update_progress(analysis_id, 100)
+
+            # Cleanup
+            if os.path.exists(segments_dir):
+                shutil.rmtree(segments_dir)
+
+            return report_path
+        except Exception as e:
+            import logging
+            logging.error(f"Pipeline failed for analysis {analysis_id}: {e}")
+            # Mark FAILED and persist error details
+            self.analysis_repo.update_paths_and_status(analysis_id, status=AnalysisStatus.FAILED)
+            analysis = self.analysis_repo.get_by_id(analysis_id)
+            if analysis:
+                analysis.status = AnalysisStatus.FAILED
+                analysis.error_message = str(e)
+                self.analysis_repo.db.commit()
+            raise
 
     def delete_analysis(self, analysis_id: str, user_id: int) -> None:
         analysis = self.analysis_repo.get_detailed_by_id(analysis_id)
