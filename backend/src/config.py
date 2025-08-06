@@ -7,7 +7,9 @@ class Settings(BaseSettings):
     # API keys
     AZURE_SPEECH_KEY: constr(strip_whitespace=True, min_length=1)
     AZURE_SPEECH_REGION: constr(strip_whitespace=True, min_length=1)
-    GOOGLE_API_KEY: constr(strip_whitespace=True, min_length=1)
+    AZURE_AI_API_KEY: constr(strip_whitespace=True, min_length=1)
+    AZURE_AI_API_BASE: constr(strip_whitespace=True, min_length=1)
+    AZURE_AI_MODEL_NAME: str = "command-r-plus"
 
     # Database
     DATABASE_URL: PostgresDsn | str = Field(

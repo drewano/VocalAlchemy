@@ -13,7 +13,7 @@ from src.infrastructure.repositories.analysis_repository import AnalysisReposito
 from src.services.analysis_service import AnalysisService, AnalysisNotFoundException
 from src.services.audio_splitter import split_audio
 from src.services.external_apis.azure_speech_client import AzureSpeechClient
-from src.services.external_apis.ai_processor import GoogleAIProcessor
+from src.services.external_apis.litellm_ai_processor import LiteLLMAIProcessor
 from src.config import settings
 
 router = APIRouter()
@@ -27,14 +27,15 @@ def get_transcriber() -> AzureSpeechClient:
     return AzureSpeechClient(api_key=settings.AZURE_SPEECH_KEY, region=settings.AZURE_SPEECH_REGION)
 
 
-def get_ai_analyzer() -> GoogleAIProcessor:
-    return GoogleAIProcessor(api_key=settings.GOOGLE_API_KEY)
+def get_ai_analyzer() -> LiteLLMAIProcessor:
+    # LiteLLM/Azure AI: model name driven; API key/base should be set in environment for litellm
+    return LiteLLMAIProcessor(model_name=settings.AZURE_AI_MODEL_NAME)
 
 
 def get_analysis_service(
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     transcriber: AzureSpeechClient = Depends(get_transcriber),
-    ai_analyzer: GoogleAIProcessor = Depends(get_ai_analyzer),
+    ai_analyzer: LiteLLMAIProcessor = Depends(get_ai_analyzer),
 ) -> AnalysisService:
     return AnalysisService(
         analysis_repo,

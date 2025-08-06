@@ -8,9 +8,10 @@ from typing import Optional, Protocol, List
 from langextract.resolver import ResolverParsingError
 from src.infrastructure.repositories.analysis_repository import AnalysisRepository
 from src.services.external_apis.azure_speech_client import AzureSpeechClient
-from src.services.external_apis.ai_processor import GoogleAIProcessor
+from src.services.external_apis.litellm_ai_processor import LiteLLMAIProcessor
 from src.infrastructure.sql_models import AnalysisStatus
-from src.services.transcript_analyzer import TranscriptAnalyzer
+from src.services import pipeline_prompts
+
 
 
 class AnalysisNotFoundException(Exception):
@@ -28,7 +29,7 @@ class Transcriber(Protocol):
 
 
 class AIAnalyzer(Protocol):
-    def analyze_transcript(self, transcript: str, user_prompt: Optional[str] = None) -> str:
+    def execute_prompt(self, system_prompt: str, user_content: str) -> str:
         ...
 
 
@@ -39,22 +40,12 @@ class AnalysisService:
         *,
         audio_splitter: AudioSplitter,
         transcriber: Transcriber,
-        ai_analyzer: AIAnalyzer,
+        ai_analyzer: LiteLLMAIProcessor,
     ) -> None:
         self.analysis_repo = analysis_repo
         self.audio_splitter = audio_splitter
         self.transcriber = transcriber
-        self.google_ai = ai_analyzer
-        self.transcript_analyzer = TranscriptAnalyzer()
-
-    def _extract_people_involved(self, analysis_text: str) -> Optional[str]:
-        if not analysis_text:
-            return None
-        marker = "### Personnes Concernées"
-        idx = analysis_text.find(marker)
-        if idx == -1:
-            return None
-        return analysis_text[idx + len(marker):].strip() or None
+        self.ai_analyzer = ai_analyzer
 
     def _prepare_segments_dir(self, base_output_dir: str) -> str:
         segments_dir = os.path.join(base_output_dir, "segments")
@@ -65,32 +56,52 @@ class AnalysisService:
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
 
-    def _process_transcript_and_create_version(self, analysis_id: str, transcript: str, prompt: Optional[str], base_output_dir: str) -> str:
-        # Structured plan extraction with LangExtract
-        try:
-            structured_plan = self.transcript_analyzer.extract_action_plan(transcript)
-        except ResolverParsingError as e:
-            logging.error(f"Failed to parse action plan for analysis {analysis_id}: {e}")
-            raise
+    def _execute_analysis_pipeline(self, transcript: str, original_prompt: Optional[str]) -> str:
+        if not isinstance(transcript, str) or not transcript.strip():
+            raise ValueError("Invalid transcript for pipeline")
 
-        enriched_transcript = transcript + "\n\n" + json.dumps({"action_plan": structured_plan}, ensure_ascii=False)
-        analysis_result = self.google_ai.analyze_transcript(enriched_transcript, prompt)
-
-        # Pick filename (versioned when used in rerun)
-        filename = "report.txt" if prompt is None else f"report_{int(__import__('time').time())}.txt"
-        report_path = os.path.join(base_output_dir, filename)
-        self._write_text_file(report_path, analysis_result)
-
-        people_involved = self._extract_people_involved(analysis_result)
-        structured_plan_dict = structured_plan if isinstance(structured_plan, dict) else {}
-        self.analysis_repo.add_version(
-            analysis_id=analysis_id,
-            prompt_used=prompt or "",
-            result_path=report_path,
-            people_involved=people_involved,
-            structured_plan=structured_plan_dict,
+        # Étape 1 : Intervenants
+        intervenants_md = self.ai_analyzer.execute_prompt(
+            system_prompt=pipeline_prompts.PROMPT_INTERVENANTS,
+            user_content=transcript,
         )
-        return report_path
+
+        # Étape 2 : Ordre du Jour
+        prompt_odj = pipeline_prompts.PROMPT_ORDRE_DU_JOUR.format(intervenants=intervenants_md)
+        ordre_du_jour_md = self.ai_analyzer.execute_prompt(
+            system_prompt=prompt_odj,
+            user_content=transcript,
+        )
+
+        # Étape 3 : Synthèse
+        prompt_synthese = pipeline_prompts.PROMPT_SYNTHESE.format(
+            intervenants=intervenants_md,
+            ordre_du_jour=ordre_du_jour_md,
+        )
+        synthese_md = self.ai_analyzer.execute_prompt(
+            system_prompt=prompt_synthese,
+            user_content=transcript,
+        )
+
+        # Étape 4 : Décisions et Actions
+        prompt_decisions = pipeline_prompts.PROMPT_DECISIONS.format(
+            intervenants=intervenants_md,
+            synthese=synthese_md,
+        )
+        decisions_md = self.ai_analyzer.execute_prompt(
+            system_prompt=prompt_decisions,
+            user_content=transcript,
+        )
+
+        # Assemblage Final
+        final_report_content = (
+            "# Procès-Verbal de Réunion\n\n"
+            "## Intervenants\n" + intervenants_md.strip() + "\n\n"
+            "## Ordre du jour\n" + ordre_du_jour_md.strip() + "\n\n"
+            "## Synthèse des échanges\n" + synthese_md.strip() + "\n\n"
+            "## Relevé de décisions et d'actions\n" + decisions_md.strip() + "\n"
+        )
+        return final_report_content
 
     def run_full_pipeline(self, analysis_id: str, source_path: str, base_output_dir: str, user_prompt: Optional[str] = None) -> str:
         if not source_path or not isinstance(source_path, str):
@@ -134,12 +145,19 @@ class AnalysisService:
             transcript_path = os.path.join(base_output_dir, "transcription.txt")
             self._write_text_file(transcript_path, full_text)
 
-            # Process transcript and create version
-            report_path = self._process_transcript_and_create_version(
+            # Exécuter le pipeline factorisé
+            final_report_content = self._execute_analysis_pipeline(full_text, user_prompt)
+
+            # Sauvegarde et Versionnement
+            report_path = os.path.join(base_output_dir, "report.txt")
+            self._write_text_file(report_path, final_report_content)
+
+            self.analysis_repo.add_version(
                 analysis_id=analysis_id,
-                transcript=full_text,
-                prompt=user_prompt,
-                base_output_dir=base_output_dir,
+                prompt_used=user_prompt or "",
+                result_path=report_path,
+                people_involved=None,
+                structured_plan=None,
             )
 
             # Finish
@@ -192,15 +210,21 @@ class AnalysisService:
 
         self.analysis_repo.update_status(analysis_id, AnalysisStatus.PROCESSING)
 
-        report_path = self._process_transcript_and_create_version(
-            analysis_id=analysis_id,
-            transcript=transcript,
-            prompt=new_prompt,
-            base_output_dir=base_output_dir,
-        )
+        # Exécuter le pipeline factorisé
+        final_report_content = self._execute_analysis_pipeline(transcript, new_prompt)
 
-        if not report_path:
-            return ""
+        # Sauvegarde dans un fichier versionné pour ne pas écraser l'existant
+        report_path = os.path.join(base_output_dir, f"report_{int(__import__('time').time())}.txt")
+        self._write_text_file(report_path, final_report_content)
+
+        # Versionnement
+        self.analysis_repo.add_version(
+            analysis_id=analysis_id,
+            prompt_used=new_prompt or "",
+            result_path=report_path,
+            people_involved=None,
+            structured_plan=None,
+        )
 
         self.analysis_repo.update_status(analysis_id, AnalysisStatus.COMPLETED)
         self.analysis_repo.update_progress(analysis_id, 100)
