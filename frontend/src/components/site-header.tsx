@@ -1,10 +1,13 @@
+import { useContext } from "react"
 import { Bell } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import AuthContext from "@/contexts/AuthContext"
 
 export function SiteHeader() {
-  // TODO: brancher l'avatar utilisateur via le contexte d'authentification si disponible
-  const userInitials = "AA"
-  const avatarSrc = undefined // Remplacer par l'URL de l'avatar utilisateur si disponible
+  const { user } = useContext(AuthContext) ?? {}
+  
+  const userInitials = user?.email?.charAt(0).toUpperCase() ?? ''
+  const avatarSrc = undefined // L'URL de l'avatar n'est pas disponible dans le modèle utilisateur
 
   return (
     <header className="flex h-(--header-height) shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">

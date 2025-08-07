@@ -41,10 +41,13 @@ class Analysis(Base):
     filename = Column(String, nullable=False)
     # Nom du blob dans Azure Storage correspondant à la source
     source_blob_name = Column(String, nullable=False)
+    normalized_blob_name: Mapped[str] = mapped_column(String, nullable=True)
     result_blob_name = Column(String, nullable=True)
     transcript_blob_name = Column(String, nullable=True)
     transcription_job_url: Mapped[str] = mapped_column(String, nullable=True)
     prompt = Column(String, nullable=True)
+    transcript_snippet: Mapped[str] = mapped_column(String(255), nullable=True)
+    analysis_snippet: Mapped[str] = mapped_column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationship

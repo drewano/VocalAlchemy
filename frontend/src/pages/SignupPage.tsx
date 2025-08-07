@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import * as api from '@/services/api';
 import { LoginForm } from '@/components/login-form';
 
@@ -21,10 +22,12 @@ const SignupPage: React.FC = () => {
     
     try {
       await api.signup(data.email, data.password);
-      // Succès: rediriger simplement vers la page de connexion
+      // Afficher un message de succès
+      toast.success("Votre compte a été créé avec succès. Vous pouvez maintenant vous connecter.");
+      // Succès: rediriger vers la page de connexion
       navigate('/login');
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Erreur lors de l'inscription");
+      setError(err.message || "Erreur lors de l'inscription");
     } finally {
       setIsLoading(false);
     }

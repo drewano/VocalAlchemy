@@ -144,15 +144,11 @@ export async function getMe(): Promise<User> {
  * @returns Objet contenant token, type et user
  */
 export async function login(email: string, password: string): Promise<LoginResponse> {
-  const formData = new FormData()
-  formData.append('username', email) // Le backend attend 'username' pour l'email
-  formData.append('password', password)
+  const params = new URLSearchParams()
+  params.append('username', email) // Le backend attend 'username' pour l'email
+  params.append('password', password)
 
-  const response = await api.post('/users/token', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  })
+  const response = await api.post('/users/token', params)
 
   return response.data
 }
@@ -161,9 +157,9 @@ export async function login(email: string, password: string): Promise<LoginRespo
  * Inscrit un nouvel utilisateur
  * @param email L'email de l'utilisateur
  * @param password Le mot de passe de l'utilisateur
- * @returns Un objet contenant le token d'accès
+ * @returns Un objet contenant les informations de l'utilisateur créé
  */
-export async function signup(email: string, password: string): Promise<{ access_token: string }> {
+export async function signup(email: string, password: string): Promise<User> {
   const response = await api.post('/users/register', { email, password })
   return response.data
 }

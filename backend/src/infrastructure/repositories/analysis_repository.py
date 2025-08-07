@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import joinedload
 from src.infrastructure.repositories.base_repository import BaseRepository
 from src.infrastructure import sql_models as models
@@ -62,14 +62,11 @@ class AnalysisRepository(BaseRepository):
         return result.scalars().all()
 
     async def count_by_user(self, user_id: int) -> int:
-        result = await self.db.execute(
-            select(models.Analysis).where(models.Analysis.user_id == user_id)
-        )
-        # SQLAlchemy async count: fetch all IDs or use func.count in select
-        rows = result.scalars().all()
-        return len(rows)
+        stmt = select(func.count()).select_from(models.Analysis).where(models.Analysis.user_id == user_id)
+        result = await self.db.execute(stmt)
+        return result.scalar_one()
 
-    async def update_paths_and_status(self, analysis_id: str, *, status: Optional[models.AnalysisStatus] = None, result_blob_name: Optional[str] = None, transcript_blob_name: Optional[str] = None) -> None:
+    async def update_paths_and_status(self, analysis_id: str, *, status: Optional[models.AnalysisStatus] = None, result_blob_name: Optional[str] = None, transcript_blob_name: Optional[str] = None, transcript_snippet: Optional[str] = None, analysis_snippet: Optional[str] = None) -> None:
         analysis = await self.get_by_id(analysis_id)
         if not analysis:
             return
@@ -79,6 +76,10 @@ class AnalysisRepository(BaseRepository):
             analysis.result_blob_name = result_blob_name
         if transcript_blob_name is not None:
             analysis.transcript_blob_name = transcript_blob_name
+        if transcript_snippet is not None:
+            analysis.transcript_snippet = transcript_snippet
+        if analysis_snippet is not None:
+            analysis.analysis_snippet = analysis_snippet
         await self.db.commit()
 
     async def update_status(self, analysis_id: str, status: models.AnalysisStatus) -> None:

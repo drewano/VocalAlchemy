@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Union
+from typing import Union, AsyncIterator
 
 from azure.storage.blob.aio import BlobServiceClient
 from azure.storage.blob import (
@@ -106,3 +106,55 @@ class BlobStorageService:
         except Exception:
             # Let unexpected exceptions bubble up for caller handling
             raise
+
+    async def upload_blob_from_stream(self, stream: any, blob_name: str, length: int) -> None:
+        if not blob_name or not isinstance(blob_name, str):
+            raise ValueError("Invalid blob_name provided")
+        if not isinstance(length, int) or length < 0:
+            raise ValueError("Invalid length provided")
+        blob_client = self._container_client.get_blob_client(blob_name)
+        await blob_client.upload_blob(stream, length=length, overwrite=True)
+
+    async def download_blob_as_bytes(self, blob_name: str) -> bytes:
+        if not blob_name or not isinstance(blob_name, str):
+            raise ValueError("Invalid blob_name provided")
+        blob_client = self._container_client.get_blob_client(blob_name)
+        try:
+            stream = await blob_client.download_blob()
+            data = await stream.readall()
+            return data
+        except ResourceNotFoundError:
+            logging.error(f"Blob not found for download: {blob_name}")
+            raise
+        except Exception:
+            # Let unexpected exceptions bubble up for caller handling
+            raise
+
+    async def download_blob_as_stream(self, blob_name: str) -> AsyncIterator[bytes]:
+        """
+        Download a blob as a stream of bytes chunks.
+        Returns an async iterator that yields bytes chunks.
+        """
+        if not blob_name or not isinstance(blob_name, str):
+            raise ValueError("Invalid blob_name provided")
+        blob_client = self._container_client.get_blob_client(blob_name)
+        try:
+            stream = await blob_client.download_blob()
+            async for chunk in stream.chunks():
+                yield chunk
+        except ResourceNotFoundError:
+            logging.error(f"Blob not found for download: {blob_name}")
+            raise
+        except Exception:
+            # Let unexpected exceptions bubble up for caller handling
+            raise
+
+    async def upload_blob_from_generator(self, generator: AsyncIterator[bytes], blob_name: str) -> None:
+        """
+        Upload blob content from an async generator/iterator of bytes chunks.
+        The total size of the stream is unknown, so no length parameter is passed.
+        """
+        if not blob_name or not isinstance(blob_name, str):
+            raise ValueError("Invalid blob_name provided")
+        blob_client = self._container_client.get_blob_client(blob_name)
+        await blob_client.upload_blob(generator, overwrite=True)

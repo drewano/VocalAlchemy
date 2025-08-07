@@ -118,7 +118,7 @@ export function AppSidebar({ onSearchChange, ...props }: React.ComponentProps<ty
                     <div className="flex items-center gap-2">
                       <Avatar>
                         <AvatarFallback>
-                          {user?.email ? user.email.split('@')[0].slice(0, 2).toUpperCase() : '??'}
+                          {user?.email ? user.email.slice(0, 2).toUpperCase() : '??'}
                         </AvatarFallback>
                       </Avatar>
                       <span className="group-data-[collapsible=icon]:hidden">
