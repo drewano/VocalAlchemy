@@ -7,6 +7,7 @@ from azure.storage.blob import (
     BlobSasPermissions,
     generate_blob_sas,
 )
+from azure.storage.blob import ContentSettings
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 
 
@@ -51,7 +52,10 @@ class BlobStorageService:
             raise ValueError("Invalid blob_name provided")
 
         blob_client = self._container_client.get_blob_client(blob_name)
-        await blob_client.upload_blob(data, overwrite=True)
+        content_settings = None
+        if blob_name.lower().endswith(".flac"):
+            content_settings = ContentSettings(content_type="audio/flac")
+        await blob_client.upload_blob(data, overwrite=True, content_settings=content_settings)
 
         # Build SAS with read permission
         account_name = self._blob_service.account_name
@@ -77,6 +81,21 @@ class BlobStorageService:
             account_key=self._blob_service.credential.account_key,  # type: ignore[attr-defined]
             permission=BlobSasPermissions(read=True),
             expiry=datetime.now(timezone.utc) + timedelta(hours=ttl_hours),
+        )
+        return f"{blob_client.url}?{sas_token}"
+
+    async def get_blob_upload_sas_url(self, blob_name: str, ttl_minutes: int = 60) -> str:
+        if not blob_name or not isinstance(blob_name, str):
+            raise ValueError("Invalid blob_name provided")
+        blob_client = self._container_client.get_blob_client(blob_name)
+        account_name = self._blob_service.account_name
+        sas_token = generate_blob_sas(
+            account_name=account_name,
+            container_name=self.storage_container_name,
+            blob_name=blob_name,
+            account_key=self._blob_service.credential.account_key,  # type: ignore[attr-defined]
+            permission=BlobSasPermissions(create=True, write=True),
+            expiry=datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes),
         )
         return f"{blob_client.url}?{sas_token}"
 
@@ -157,4 +176,7 @@ class BlobStorageService:
         if not blob_name or not isinstance(blob_name, str):
             raise ValueError("Invalid blob_name provided")
         blob_client = self._container_client.get_blob_client(blob_name)
-        await blob_client.upload_blob(generator, overwrite=True)
+        content_settings = None
+        if blob_name.lower().endswith(".flac"):
+            content_settings = ContentSettings(content_type="audio/flac")
+        await blob_client.upload_blob(generator, overwrite=True, content_settings=content_settings)

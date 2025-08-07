@@ -54,23 +54,43 @@ export async function getPrompts(): Promise<PredefinedPrompts> {
 }
 
 /**
- * Envoie un fichier audio pour traitement avec un prompt spécifique
- * @param file Le fichier audio à traiter
- * @param prompt Le prompt à utiliser pour l'analyse
- * @returns Un objet contenant l'ID de la tâche
+ * Initie un upload de fichier audio en deux étapes
+ * @param filename Le nom du fichier à uploader
+ * @returns Un objet contenant l'URL SAS, le nom du blob et l'ID de l'analyse
  */
-export async function processAudio(file: File, prompt: string): Promise<{ analysis_id: string }> {
-  const formData = new FormData()
-  formData.append('file', file)
-  formData.append('prompt', prompt)
+export async function initiateUpload(filename: string): Promise<{ sasUrl: string, blobName: string, analysisId: string }> {
+  const response = await api.post('/analysis/initiate-upload/', { filename })
+  return {
+    sasUrl: response.data.sas_url,
+    blobName: response.data.blob_name,
+    analysisId: response.data.analysis_id
+  }
+}
 
-  const response = await api.post('/analysis/process-audio/', formData, {
+/**
+ * Upload un fichier directement vers Azure Blob Storage via URL SAS
+ * @param sasUrl L'URL SAS pour l'upload
+ * @param file Le fichier à uploader
+ */
+export async function uploadFileToSasUrl(sasUrl: string, file: File): Promise<void> {
+  await axios.put(sasUrl, file, {
     headers: {
-      'Content-Type': 'multipart/form-data',
+      'x-ms-blob-type': 'BlockBlob',
+      'Content-Type': file.type || 'application/octet-stream',
     },
   })
+}
 
-  return response.data
+/**
+ * Finalise l'upload et démarre le traitement
+ * @param analysisId L'ID de l'analyse créée lors de l'initiation
+ * @param prompt Le prompt à utiliser pour l'analyse
+ */
+export async function finalizeUpload(analysisId: string, prompt: string): Promise<void> {
+  await api.post('/analysis/finalize-upload/', { 
+    analysis_id: analysisId, 
+    prompt 
+  })
 }
 
 
@@ -99,9 +119,10 @@ export async function getAnalysisDetail(taskId: string): Promise<AnalysisDetail>
 }
 
 export async function rerunAnalysis(analysisId: string, prompt: string): Promise<any> {
-  const formData = new FormData()
-  formData.append('prompt', prompt)
-  const res = await api.post(`/analysis/rerun/${analysisId}`, formData)
+  const res = await api.post(`/analysis/rerun/${analysisId}`, { 
+    analysis_id: analysisId, 
+    prompt 
+  })
   return res.data
 }
 

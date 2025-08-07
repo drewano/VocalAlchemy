@@ -61,6 +61,8 @@ class AzureSpeechClient:
                 "wordLevelTimestampsEnabled": True,
                 "punctuationMode": "DictatedAndAutomatic",
                 "profanityFilterMode": "Masked",
+                # Spécifie explicitement le canal mono (0) pour la diarisation afin d'éviter InvalidData
+                "channels": [0],
             },
         }
 

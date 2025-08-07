@@ -122,7 +122,7 @@ class AnalysisService:
             await self.analysis_repo.update_status(analysis_id, AnalysisStatus.TRANSCRIPTION_FAILED)
             analysis.error_message = str(e)
             try:
-                await self.analysis_repo._db.commit()  # type: ignore[attr-defined]
+                await self.analysis_repo.db.commit()
             except Exception:
                 pass
             raise
@@ -137,19 +137,19 @@ class AnalysisService:
         analysis.transcription_job_url = status_url
         analysis.normalized_blob_name = normalized_blob_name
         try:
-            await self.analysis_repo._db.commit()  # type: ignore[attr-defined]
+            await self.analysis_repo.db.commit()
         except Exception:
             pass
 
-    async def check_transcription_status(self, analysis_id: str) -> str:
+    async def check_transcription_status(self, analysis_id: str) -> tuple[str, dict]:
         analysis = await self.analysis_repo.get_by_id(analysis_id)
         if not analysis:
             raise ValueError(f"Analysis not found: {analysis_id}")
         if analysis.status != AnalysisStatus.TRANSCRIPTION_IN_PROGRESS:
-            return "running"
+            return ("running", {})
         if not analysis.transcription_job_url:
             logging.warning("No transcription_job_url stored for analysis %s", analysis_id)
-            return "running"
+            return ("running", {})
 
         status_resp = await self.transcriber.check_transcription_status(analysis.transcription_job_url)
         status = str(status_resp.get("status") or status_resp.get("statusCode")).lower()
@@ -163,13 +163,13 @@ class AnalysisService:
                 status=AnalysisStatus.ANALYSIS_PENDING,
                 transcript_blob_name=transcript_blob_name,
             )
-            return "succeeded"
+            return ("succeeded", status_resp)
         elif status == "failed":
             logging.error(f"Azure transcription failed. Full response: {status_resp}")
             await self.analysis_repo.update_status(analysis_id, AnalysisStatus.TRANSCRIPTION_FAILED)
-            return "failed"
+            return ("failed", status_resp)
         else:
-            return "running"
+            return ("running", status_resp)
 
     async def run_ai_analysis_pipeline(self, analysis_id: str) -> None:
         analysis = await self.analysis_repo.get_by_id(analysis_id)
@@ -252,7 +252,7 @@ class AnalysisService:
             if analysis:
                 analysis.error_message = error_details
                 try:
-                    await self.analysis_repo._db.commit()  # type: ignore[attr-defined]
+                    await self.analysis_repo.db.commit()
                 except Exception:
                     pass
             raise
@@ -289,7 +289,25 @@ class AnalysisService:
         Converts audio to FLAC 16kHz mono 16-bit format.
         """
         # Define ffmpeg command
-        ffmpeg_command = ["ffmpeg", "-i", "pipe:0", "-f", "flac", "-ar", "16000", "-ac", "1", "-"]
+        ffmpeg_command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            "pipe:0",
+            "-f",
+            "flac",
+            "-acodec",
+            "flac",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-sample_fmt",
+            "s16",
+            "-",
+        ]
         
         # Create subprocess
         process = await asyncio.create_subprocess_exec(
@@ -303,12 +321,21 @@ class AnalysisService:
             """Download source blob and write chunks to ffmpeg stdin"""
             try:
                 async for chunk in self.blob_storage_service.download_blob_as_stream(source_blob_name):
-                    await process.stdin.write(chunk)
-                await process.stdin.aclose()  # Signal end of input to ffmpeg
+                    process.stdin.write(chunk)
+                    await process.stdin.drain()
+                # Signal end of input to ffmpeg
+                try:
+                    process.stdin.close()
+                    if hasattr(process.stdin, "wait_closed"):
+                        await process.stdin.wait_closed()
+                except Exception:
+                    pass
             except Exception as e:
                 logging.error("Error in writer coroutine: %s", e)
                 try:
-                    await process.stdin.aclose()
+                    process.stdin.close()
+                    if hasattr(process.stdin, "wait_closed"):
+                        await process.stdin.wait_closed()
                 except Exception:
                     pass
                 raise
@@ -316,7 +343,17 @@ class AnalysisService:
         async def uploader():
             """Read ffmpeg stdout and upload chunks to normalized blob"""
             async def stdout_generator():
-                async for chunk in process.stdout:
+                # Read raw binary from stdout in fixed-size chunks
+                # Using read() avoids newline-delimited iteration which corrupts binary streams
+                CHUNK_SIZE_BYTES = 64 * 1024
+                while True:
+                    try:
+                        chunk = await process.stdout.read(CHUNK_SIZE_BYTES)
+                    except Exception as e:
+                        logging.error("Error reading from ffmpeg stdout: %s", e)
+                        raise
+                    if not chunk:
+                        break
                     yield chunk
             
             await self.blob_storage_service.upload_blob_from_generator(

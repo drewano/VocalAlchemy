@@ -84,6 +84,19 @@ class AnalysisStatusResponse(BaseModel):
     id: str
     status: str
 
+# Upload schemas
+class InitiateUploadRequest(BaseModel):
+    filename: str
+
+class InitiateUploadResponse(BaseModel):
+    sas_url: str
+    blob_name: str
+    analysis_id: str
+
+class FinalizeUploadRequest(BaseModel):
+    analysis_id: str
+    prompt: str
+
 # Token schemas
 class Token(BaseModel):
     access_token: str

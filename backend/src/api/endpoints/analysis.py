@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form, Body, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Body
 from fastapi.responses import PlainTextResponse
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,8 +8,8 @@ from src.worker.redis import get_redis_pool
 
 from src.infrastructure import sql_models as models
 from src.api import schemas
-from src.infrastructure.database import get_async_db
 from src.auth import get_current_user
+from src.infrastructure.database import get_async_db
 from src.infrastructure.repositories.analysis_repository import AnalysisRepository
 from src.services.analysis_service import AnalysisService, AnalysisNotFoundException
 from src.services.external_apis.azure_speech_client import AzureSpeechClient
@@ -65,8 +65,6 @@ async def get_analysis_status(
     analysis_id: str,
     current_user: models.User = Depends(get_current_user),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
-    analysis_service: AnalysisService = Depends(get_analysis_service),
-    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ):
     analysis = await analysis_repo.get_by_id(analysis_id)
     if not analysis:
@@ -76,91 +74,78 @@ async def get_analysis_status(
 
     return schemas.AnalysisStatusResponse(id=analysis.id, status=analysis.status)
 
-# Alias direct pour compat: POST /api/process-audio/
-@router.post("/process-audio/", tags=["alias"])  # réel: /api/analysis/process-audio/
-async def process_audio(
-    request: Request,
-    file: UploadFile = File(...),
-    prompt: str = Form(...),
+@router.post("/initiate-upload/", response_model=schemas.InitiateUploadResponse)
+async def initiate_upload(
+    body: schemas.InitiateUploadRequest,
     current_user: models.User = Depends(get_current_user),
-    analysis_service: AnalysisService = Depends(get_analysis_service),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
-    arq_pool: ArqRedis = ARQ_POOL,
 ):
-    # 1. Validate file content type
-    allowed_audio_types = [
-        "audio/mpeg", "audio/wav", "audio/mp4", 
-        "audio/x-m4a", "audio/flac", "audio/webm"
-    ]
-    if file.content_type not in allowed_audio_types:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Invalid file type. Allowed types: {', '.join(allowed_audio_types)}"
-        )
+    # 1. Generate a unique blob name
+    blob_name = f"{current_user.id}/{uuid.uuid4()}-{body.filename}"
 
-    # 2. Validate file size via content-length header
-    content_length = request.headers.get("content-length")
-    if not content_length:
-        raise HTTPException(
-            status_code=400, 
-            detail="Content-Length header is required"
-        )
-    
-    try:
-        content_length_int = int(content_length)
-    except ValueError:
-        raise HTTPException(
-            status_code=400, 
-            detail="Invalid Content-Length header"
-        )
-    
-    max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-    if content_length_int > max_size_bytes:
-        raise HTTPException(
-            status_code=413, 
-            detail=f"File too large. Maximum size: {settings.MAX_UPLOAD_SIZE_MB}MB"
-        )
-
-    # 3. Generate a unique blob name
-    blob_name = f"{current_user.id}/{uuid.uuid4()}-{file.filename}"
-
-    # 4. Create analysis row storing the blob name
+    # 2. Create analysis row storing the blob name
     analysis = await analysis_repo.create(
         user_id=current_user.id,
-        filename=file.filename or "uploaded_audio",
+        filename=body.filename,
         status=models.AnalysisStatus.PENDING,
         source_blob_name=blob_name,
-        prompt=prompt,
+        prompt="",  # Will be set later in finalize-upload
     )
 
     analysis_id = analysis.id
 
-    # 5. Upload file using streaming instead of loading into memory
+    # 3. Generate SAS URL for upload
     try:
-        await blob_storage_service.upload_blob_from_stream(
-            file.file, blob_name, content_length_int
-        )
+        sas_url = await blob_storage_service.get_blob_upload_sas_url(blob_name, ttl_minutes=60)
     except Exception as e:
         await analysis_repo.update_status(analysis_id, models.AnalysisStatus.FAILED)
-        raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error generating SAS URL: {str(e)}")
 
-    # 6. Enqueue transcription task (no longer passing file content)
+    return schemas.InitiateUploadResponse(
+        sas_url=sas_url,
+        blob_name=blob_name,
+        analysis_id=analysis_id
+    )
+
+
+@router.post("/finalize-upload/")
+async def finalize_upload(
+    body: schemas.FinalizeUploadRequest,
+    current_user: models.User = Depends(get_current_user),
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+    arq_pool: ArqRedis = ARQ_POOL,
+):
+    # 1. Retrieve and validate analysis ownership
+    analysis = await analysis_repo.get_by_id(body.analysis_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    if analysis.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # 2. Update the prompt field
     try:
-        await arq_pool.enqueue_job('start_transcription_task', analysis_id)
-        return {"analysis_id": analysis_id}
+        # Update the analysis with the provided prompt
+        analysis.prompt = body.prompt
+        await analysis_repo.db.commit()
     except Exception as e:
-        await analysis_repo.update_status(analysis_id, models.AnalysisStatus.FAILED)
+        raise HTTPException(status_code=500, detail=f"Error updating analysis: {str(e)}")
+
+    # 3. Enqueue transcription task
+    try:
+        await arq_pool.enqueue_job('start_transcription_task', body.analysis_id)
+        return {"status": "processing_started"}
+    except Exception as e:
+        await analysis_repo.update_status(body.analysis_id, models.AnalysisStatus.FAILED)
         raise HTTPException(status_code=500, detail=f"Error starting transcription: {str(e)}")
 
 
 @router.post("/rerun/{analysis_id}")
 async def rerun_analysis(
     analysis_id: str,
-    prompt: str = Form(...),
+    body: schemas.FinalizeUploadRequest,
     current_user: models.User = Depends(get_current_user),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
-    analysis_service: AnalysisService = Depends(get_analysis_service),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
     arq_pool: ArqRedis = ARQ_POOL,
 ):
@@ -180,6 +165,11 @@ async def rerun_analysis(
         _ = await blob_storage_service.download_blob_as_text(analysis.transcript_blob_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read transcript from storage: {str(e)}")
+
+    # Update the prompt if provided
+    if body.prompt:
+        analysis.prompt = body.prompt
+        await analysis_repo.db.commit()
 
     # Update status to ANALYSIS_PENDING before enqueuing task
     await analysis_repo.update_status(analysis_id, models.AnalysisStatus.ANALYSIS_PENDING)
@@ -306,9 +296,7 @@ async def list_analyses(
     skip: int = 0,
     limit: int = 20,
     current_user: models.User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
-    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ) -> schemas.AnalysisListResponse:
     items = await analysis_repo.list_by_user(current_user.id, skip=skip, limit=limit)
     total = await analysis_repo.count_by_user(current_user.id)
@@ -338,11 +326,8 @@ async def list_analyses(
 @router.get("/{analysis_id}")
 async def get_analysis_detail(
     analysis_id: str,
-    background_tasks: BackgroundTasks,
     current_user: models.User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
-    analysis_service: AnalysisService = Depends(get_analysis_service),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ) -> schemas.AnalysisDetail:
     a = await analysis_repo.get_detailed_by_id(analysis_id)

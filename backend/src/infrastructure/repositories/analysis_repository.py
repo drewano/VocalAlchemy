@@ -48,7 +48,7 @@ class AnalysisRepository(BaseRepository):
             .where(models.Analysis.id == analysis_id)
         )
         result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
+        return result.unique().scalar_one_or_none()
 
     async def list_by_user(self, user_id: int, skip: int = 0, limit: int = 100) -> List[models.Analysis]:
         stmt = (
