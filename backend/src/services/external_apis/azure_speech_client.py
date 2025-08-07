@@ -133,20 +133,51 @@ class AzureSpeechClient:
             )
         result_json = result_resp.json()
 
-        # result_json structure typically: { "recognizedPhrases": [ { "speaker": 1, "nBest": [ { "display": "..." } ] } ] }
+        # Parse multiple possible shapes
         lines: List[str] = []
-        phrases = result_json.get("recognizedPhrases") or []
-        for p in phrases:
-            try:
-                speaker = p.get("speaker")
-                nbest = p.get("nBest") or []
-                display_text = None
-                if nbest and isinstance(nbest[0], dict):
-                    display_text = nbest[0].get("display") or nbest[0].get("lexical") or ""
-                if display_text:
-                    speaker_label = f"SPEAKER {speaker}" if speaker is not None else "SPEAKER ?"
-                    lines.append(f"{speaker_label}: {display_text}")
-            except Exception as e:
-                logging.error(f"Error parsing recognized phrase: {e}")
 
-        return "\n".join(lines)
+        # Shape 1: recognizedPhrases with diarization
+        phrases = result_json.get("recognizedPhrases") or []
+        if isinstance(phrases, list) and phrases:
+            for p in phrases:
+                try:
+                    if not isinstance(p, dict):
+                        continue
+                    speaker = p.get("speaker")
+                    nbest = p.get("nBest") or []
+                    display_text = None
+                    if nbest and isinstance(nbest[0], dict):
+                        display_text = nbest[0].get("display") or nbest[0].get("lexical") or ""
+                    if display_text:
+                        speaker_label = f"SPEAKER {speaker}" if speaker is not None else "SPEAKER ?"
+                        lines.append(f"{speaker_label}: {display_text}")
+                except Exception as e:
+                    logging.error(f"Error parsing recognized phrase: {e}")
+
+        # Shape 2: combinedRecognizedPhrases (no diarization, single text blocks)
+        if not lines:
+            combined = result_json.get("combinedRecognizedPhrases") or []
+            for c in combined:
+                try:
+                    if not isinstance(c, dict):
+                        continue
+                    display_text = c.get("display") or c.get("lexical") or ""
+                    if display_text:
+                        lines.append(display_text)
+                except Exception as e:
+                    logging.error(f"Error parsing combined phrase: {e}")
+
+        # Shape 3: segments array with per-segment text
+        if not lines:
+            segments = result_json.get("segments") or []
+            for s in segments:
+                try:
+                    if not isinstance(s, dict):
+                        continue
+                    text = s.get("text") or s.get("displayText") or ""
+                    if text:
+                        lines.append(text)
+                except Exception as e:
+                    logging.error(f"Error parsing segment: {e}")
+
+        return "\n".join(lines).strip()

@@ -53,8 +53,11 @@ class BlobStorageService:
 
         blob_client = self._container_client.get_blob_client(blob_name)
         content_settings = None
-        if blob_name.lower().endswith(".flac"):
+        lower = blob_name.lower()
+        if lower.endswith(".flac"):
             content_settings = ContentSettings(content_type="audio/flac")
+        elif lower.endswith(".wav"):
+            content_settings = ContentSettings(content_type="audio/wav")
         await blob_client.upload_blob(data, overwrite=True, content_settings=content_settings)
 
         # Build SAS with read permission
@@ -177,6 +180,9 @@ class BlobStorageService:
             raise ValueError("Invalid blob_name provided")
         blob_client = self._container_client.get_blob_client(blob_name)
         content_settings = None
-        if blob_name.lower().endswith(".flac"):
+        lower = blob_name.lower()
+        if lower.endswith(".flac"):
             content_settings = ContentSettings(content_type="audio/flac")
+        elif lower.endswith(".wav"):
+            content_settings = ContentSettings(content_type="audio/wav")
         await blob_client.upload_blob(generator, overwrite=True, content_settings=content_settings)

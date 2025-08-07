@@ -1,12 +1,14 @@
 import logging
-import asyncio
+import os
+import tempfile
 from typing import Protocol
+from pydub import AudioSegment
 
-from src.infrastructure.repositories.analysis_repository import AnalysisRepository
-from src.services.external_apis.litellm_ai_processor import LiteLLMAIProcessor
-from src.infrastructure.sql_models import AnalysisStatus
-from src.services import pipeline_prompts
-from src.services.blob_storage_service import BlobStorageService
+from ..infrastructure.repositories.analysis_repository import AnalysisRepository
+from .external_apis.litellm_ai_processor import LiteLLMAIProcessor
+from ..infrastructure.sql_models import AnalysisStatus
+from . import pipeline_prompts
+from .blob_storage_service import BlobStorageService
 import uuid
 
 
@@ -111,8 +113,8 @@ class AnalysisService:
         # Mise à jour du statut à TRANSCRIPTION_IN_PROGRESS
         await self.analysis_repo.update_status(analysis_id, AnalysisStatus.TRANSCRIPTION_IN_PROGRESS)
         
-        # Génération d'un nom de blob unique pour le fichier normalisé
-        normalized_blob_name = f"{analysis.user_id}/{analysis_id}/normalized.flac"
+        # Génération d'un nom de blob unique pour le fichier normalisé (WAV PCM 16k mono)
+        normalized_blob_name = f"{analysis.user_id}/{analysis_id}/normalized.wav"
         
         # Normalisation audio en streaming avec ffmpeg (FLAC 16kHz mono 16-bit)
         try:
@@ -179,6 +181,18 @@ class AnalysisService:
             raise FileNotFoundError("Transcript blob not found for analysis")
 
         transcript = await self.blob_storage_service.download_blob_as_text(analysis.transcript_blob_name)
+        # Validate transcript content before running prompts
+        if not isinstance(transcript, str) or not transcript.strip():
+            # Mark as failed with a helpful message, then raise
+            await self.analysis_repo.update_status(analysis_id, AnalysisStatus.ANALYSIS_FAILED)
+            analysis = await self.analysis_repo.get_by_id(analysis_id)
+            if analysis:
+                analysis.error_message = "Transcript is empty or invalid. Cannot run AI analysis."
+                try:
+                    await self.analysis_repo.db.commit()
+                except Exception:
+                    pass
+            raise ValueError("Transcript is empty or invalid")
 
         try:
             await self.analysis_repo.update_status(analysis_id, AnalysisStatus.ANALYSIS_IN_PROGRESS)
@@ -285,90 +299,48 @@ class AnalysisService:
 
     async def _normalize_audio_with_ffmpeg_stream(self, source_blob_name: str, normalized_blob_name: str) -> None:
         """
-        Normalize audio using ffmpeg with streaming I/O to minimize memory usage.
-        Converts audio to FLAC 16kHz mono 16-bit format.
+        Normalize audio using pydub with temporary files.
+        Converts audio to WAV (PCM s16le) 16kHz mono format.
         """
-        # Define ffmpeg command
-        ffmpeg_command = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            "pipe:0",
-            "-f",
-            "flac",
-            "-acodec",
-            "flac",
-            "-ar",
-            "16000",
-            "-ac",
-            "1",
-            "-sample_fmt",
-            "s16",
-            "-",
-        ]
-        
-        # Create subprocess
-        process = await asyncio.create_subprocess_exec(
-            *ffmpeg_command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        
-        async def writer():
-            """Download source blob and write chunks to ffmpeg stdin"""
-            try:
+        source_suffix = os.path.splitext(source_blob_name)[1] or ".tmp"
+        output_suffix = ".wav"
+
+        source_temp = tempfile.NamedTemporaryFile(delete=False, suffix=source_suffix)
+        output_temp = tempfile.NamedTemporaryFile(delete=False, suffix=output_suffix)
+        source_path = source_temp.name
+        output_path = output_temp.name
+        # Close immediately so we can reopen on Windows
+        source_temp.close()
+        output_temp.close()
+
+        try:
+            # Download source blob to temporary file
+            with open(source_path, "wb") as f:
                 async for chunk in self.blob_storage_service.download_blob_as_stream(source_blob_name):
-                    process.stdin.write(chunk)
-                    await process.stdin.drain()
-                # Signal end of input to ffmpeg
-                try:
-                    process.stdin.close()
-                    if hasattr(process.stdin, "wait_closed"):
-                        await process.stdin.wait_closed()
-                except Exception:
-                    pass
+                    f.write(chunk)
+
+            # Convert using pydub
+            try:
+                sound = AudioSegment.from_file(source_path)
+                sound = (
+                    sound.set_frame_rate(16000)
+                         .set_channels(1)
+                         .set_sample_width(2)
+                )
+                sound.export(output_path, format="wav")
             except Exception as e:
-                logging.error("Error in writer coroutine: %s", e)
+                raise FFmpegError(f"Audio conversion failed with pydub: {e}") from e
+
+            # Upload normalized file to blob storage
+            file_size = os.path.getsize(output_path)
+            with open(output_path, "rb") as f:
+                await self.blob_storage_service.upload_blob_from_stream(
+                    f, normalized_blob_name, length=file_size
+                )
+        finally:
+            # Cleanup temporary files
+            for path in (source_path, output_path):
                 try:
-                    process.stdin.close()
-                    if hasattr(process.stdin, "wait_closed"):
-                        await process.stdin.wait_closed()
+                    os.remove(path)
                 except Exception:
                     pass
-                raise
-        
-        async def uploader():
-            """Read ffmpeg stdout and upload chunks to normalized blob"""
-            async def stdout_generator():
-                # Read raw binary from stdout in fixed-size chunks
-                # Using read() avoids newline-delimited iteration which corrupts binary streams
-                CHUNK_SIZE_BYTES = 64 * 1024
-                while True:
-                    try:
-                        chunk = await process.stdout.read(CHUNK_SIZE_BYTES)
-                    except Exception as e:
-                        logging.error("Error reading from ffmpeg stdout: %s", e)
-                        raise
-                    if not chunk:
-                        break
-                    yield chunk
-            
-            await self.blob_storage_service.upload_blob_from_generator(
-                stdout_generator(), normalized_blob_name
-            )
-        
-        # Execute both coroutines simultaneously
-        await asyncio.gather(writer(), uploader())
-        
-        # Wait for process completion and check return code
-        return_code = await process.wait()
-        
-        if return_code != 0:
-            # Read stderr for error details
-            stderr_data = await process.stderr.read()
-            error_message = stderr_data.decode('utf-8') if stderr_data else "Unknown ffmpeg error"
-            logging.error("FFmpeg failed with return code %d: %s", return_code, error_message)
-            raise FFmpegError(f"FFmpeg normalization failed: {error_message}")
