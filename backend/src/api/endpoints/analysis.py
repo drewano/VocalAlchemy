@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, BackgroundTasks, Form, Body
+from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form, Body, BackgroundTasks
 from fastapi.responses import PlainTextResponse
 import uuid
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import JSONResponse
+
+from arq.connections import ArqRedis
+from src.worker.redis import get_redis_pool
 
 from src.infrastructure import sql_models as models
 from src.api import schemas
-from src.infrastructure.database import get_db
+from src.infrastructure.database import get_async_db
 from src.auth import get_current_user
 from src.infrastructure.repositories.analysis_repository import AnalysisRepository
 from src.services.analysis_service import AnalysisService, AnalysisNotFoundException
@@ -20,7 +23,9 @@ router = APIRouter()
 # Dependency providers (grouped at top for clarity and to avoid NameError in Depends)
 from functools import lru_cache
 
-def get_analysis_repository(db: Session = Depends(get_db)) -> AnalysisRepository:
+ARQ_POOL = Depends(get_redis_pool)
+
+def get_analysis_repository(db: AsyncSession = Depends(get_async_db)) -> AnalysisRepository:
     return AnalysisRepository(db)
 
 @lru_cache()
@@ -64,34 +69,30 @@ async def get_analysis_status(
     analysis_service: AnalysisService = Depends(get_analysis_service),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ):
-    analysis = analysis_repo.get_by_id(analysis_id)
+    analysis = await analysis_repo.get_by_id(analysis_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
     if analysis.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
-
-    if analysis.status == models.AnalysisStatus.TRANSCRIPTION_IN_PROGRESS:
-        await analysis_service.check_transcription_and_run_analysis(analysis_id)
-        analysis = analysis_repo.get_by_id(analysis_id)
 
     return schemas.AnalysisStatusResponse(id=analysis.id, status=analysis.status)
 
 # Alias direct pour compat: POST /api/process-audio/
 @router.post("/process-audio/", tags=["alias"])  # réel: /api/analysis/process-audio/
 async def process_audio(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     prompt: str = Form(...),
     current_user: models.User = Depends(get_current_user),
     analysis_service: AnalysisService = Depends(get_analysis_service),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+    arq_pool: ArqRedis = ARQ_POOL,
 ):
     # 1. Generate a unique blob name and read file content in memory
     blob_name = f"{current_user.id}/{uuid.uuid4()}-{file.filename}"
     content = await file.read()
 
     # 2. Create analysis row storing the blob name
-    analysis = analysis_repo.create(
+    analysis = await analysis_repo.create(
         user_id=current_user.id,
         filename=file.filename or "uploaded_audio",
         status=models.AnalysisStatus.PENDING,
@@ -101,10 +102,10 @@ async def process_audio(
 
     analysis_id = analysis.id
 
-    # 3. Launch background transcription using in-memory bytes
+    # 3. Enqueue transcription task
     try:
-        background_tasks.add_task(
-            analysis_service.start_transcription_pipeline,
+        await arq_pool.enqueue_job(
+            'start_transcription_task',
             analysis_id,
             content,
             file.filename or "uploaded_audio",
@@ -112,22 +113,22 @@ async def process_audio(
         )
         return {"analysis_id": analysis_id}
     except Exception as e:
-        analysis_repo.update_status(analysis_id, models.AnalysisStatus.FAILED)
+        await analysis_repo.update_status(analysis_id, models.AnalysisStatus.FAILED)
         raise HTTPException(status_code=500, detail=f"Error starting transcription: {str(e)}")
 
 
 @router.post("/rerun/{analysis_id}")
 async def rerun_analysis(
     analysis_id: str,
-    background_tasks: BackgroundTasks,
     prompt: str = Form(...),
     current_user: models.User = Depends(get_current_user),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     analysis_service: AnalysisService = Depends(get_analysis_service),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
+    arq_pool: ArqRedis = ARQ_POOL,
 ):
     # 1. Verify analysis exists and belongs to user
-    analysis = analysis_repo.get_by_id(analysis_id)
+    analysis = await analysis_repo.get_by_id(analysis_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
     if analysis.user_id != current_user.id:
@@ -137,20 +138,17 @@ async def rerun_analysis(
     if not analysis.transcript_blob_name:
         raise HTTPException(status_code=404, detail="Transcript not available for rerun")
 
-    # 3. Read transcript content from blob storage
+    # 3. Read transcript content from blob storage (validate accessibility)
     try:
-        transcript = await blob_storage_service.download_blob_as_text(analysis.transcript_blob_name)
+        _ = await blob_storage_service.download_blob_as_text(analysis.transcript_blob_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read transcript from storage: {str(e)}")
 
-    # Update status to ANALYSIS_PENDING before launching background task
-    analysis_repo.update_status(analysis_id, models.AnalysisStatus.ANALYSIS_PENDING)
+    # Update status to ANALYSIS_PENDING before enqueuing task
+    await analysis_repo.update_status(analysis_id, models.AnalysisStatus.ANALYSIS_PENDING)
 
-    # 4. Launch background task to rerun analysis with existing transcript
-    background_tasks.add_task(
-        analysis_service.run_ai_analysis_pipeline,
-        analysis_id=analysis_id,
-    )
+    # 4. Enqueue background task to rerun analysis with existing transcript
+    await arq_pool.enqueue_job('run_ai_analysis_task', analysis_id)
 
     # 5. Return success
     return {"message": "Rerun started", "analysis_id": analysis_id}
@@ -161,14 +159,23 @@ async def delete_analysis(
     analysis_id: str,
     current_user: models.User = Depends(get_current_user),
     analysis_service: AnalysisService = Depends(get_analysis_service),
+    arq_pool: ArqRedis = ARQ_POOL,
 ):
+    # Validate early to provide immediate feedback
     try:
-        await analysis_service.delete_analysis(analysis_id=analysis_id, user_id=current_user.id)
+        # Ensure analysis exists and ownership
+        analysis = await analysis_service.analysis_repo.get_by_id(analysis_id)
+        if not analysis:
+            raise AnalysisNotFoundException()
+        if analysis.user_id != current_user.id:
+            raise PermissionError()
     except AnalysisNotFoundException:
         raise HTTPException(status_code=404, detail="Analysis not found")
     except PermissionError:
         raise HTTPException(status_code=403, detail="Access denied")
-    # 204 No Content
+
+    # Enqueue deletion task
+    await arq_pool.enqueue_job('delete_analysis_task', analysis_id, current_user.id)
     return
 
 
@@ -179,11 +186,11 @@ async def delete_analysis(
 async def get_result(
     analysis_id: str,
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ):
-    analysis = analysis_repo.get_by_id(analysis_id)
+    analysis = await analysis_repo.get_by_id(analysis_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
     if analysis.user_id != current_user.id:
@@ -205,15 +212,15 @@ async def get_result(
 async def get_version_result(
     version_id: str,
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ):
-    version = analysis_repo.get_version_by_id(version_id)
+    version = await analysis_repo.get_version_by_id(version_id)
     if not version:
         raise HTTPException(status_code=404, detail="Version not found")
     # Check ownership via the parent analysis
-    analysis = analysis_repo.get_by_id(version.analysis_id)
+    analysis = await analysis_repo.get_by_id(version.analysis_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Parent analysis not found")
     if analysis.user_id != current_user.id:
@@ -233,11 +240,11 @@ async def get_version_result(
 async def get_transcript(
     analysis_id: str,
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ):
-    analysis = analysis_repo.get_by_id(analysis_id)
+    analysis = await analysis_repo.get_by_id(analysis_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
     if analysis.user_id != current_user.id:
@@ -262,7 +269,7 @@ async def get_original_audio(
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ):
-    analysis = analysis_repo.get_by_id(analysis_id)
+    analysis = await analysis_repo.get_by_id(analysis_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
     if analysis.user_id != current_user.id:
@@ -281,12 +288,12 @@ async def list_analyses(
     skip: int = 0,
     limit: int = 20,
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ) -> schemas.AnalysisListResponse:
-    items = analysis_repo.list_by_user(current_user.id, skip=skip, limit=limit)
-    total = analysis_repo.count_by_user(current_user.id)
+    items = await analysis_repo.list_by_user(current_user.id, skip=skip, limit=limit)
+    total = await analysis_repo.count_by_user(current_user.id)
 
     summaries: list[schemas.AnalysisSummary] = []
     for a in items:
@@ -331,23 +338,16 @@ async def get_analysis_detail(
     analysis_id: str,
     background_tasks: BackgroundTasks,
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     analysis_service: AnalysisService = Depends(get_analysis_service),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ) -> schemas.AnalysisDetail:
-    a = analysis_repo.get_detailed_by_id(analysis_id)
+    a = await analysis_repo.get_detailed_by_id(analysis_id)
     if not a:
         raise HTTPException(status_code=404, detail="Analysis not found")
     if a.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
-
-    # Backend polling step for transcription completion
-    if a.status == models.AnalysisStatus.TRANSCRIPTION_IN_PROGRESS:
-        # This call may update status and enqueue analysis
-        await analysis_service.check_transcription_and_run_analysis(analysis_id)
-        # Reload fresh state after potential update
-        a = analysis_repo.get_detailed_by_id(analysis_id)
 
     # Sort versions by created_at desc
     versions_sorted = sorted(a.versions or [], key=lambda v: v.created_at or 0, reverse=True)
@@ -356,7 +356,7 @@ async def get_analysis_detail(
     transcript_content = ""
     if getattr(a, "transcript_blob_name", None):
         try:
-            transcript_content = blob_storage_service.download_blob_as_text(a.transcript_blob_name)
+            transcript_content = await blob_storage_service.download_blob_as_text(a.transcript_blob_name)
         except Exception:
             transcript_content = ""
 
@@ -368,7 +368,7 @@ async def get_analysis_detail(
         latest_version = versions_sorted[0]
         if getattr(latest_version, "result_blob_name", None):
             try:
-                latest_analysis_content = blob_storage_service.download_blob_as_text(latest_version.result_blob_name)
+                latest_analysis_content = await blob_storage_service.download_blob_as_text(latest_version.result_blob_name)
             except Exception:
                 latest_analysis_content = ""
         people_involved = latest_version.people_involved
@@ -412,13 +412,13 @@ async def rename_analysis(
     current_user: models.User = Depends(get_current_user),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
 ):
-    analysis = analysis_repo.get_by_id(analysis_id)
+    analysis = await analysis_repo.get_by_id(analysis_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
     if analysis.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    updated = analysis_repo.update_filename(analysis_id, rename_data.filename)
+    updated = await analysis_repo.update_filename(analysis_id, rename_data.filename)
     if not updated:
         raise HTTPException(status_code=404, detail="Analysis not found")
 

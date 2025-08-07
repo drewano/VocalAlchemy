@@ -23,6 +23,16 @@ services:
       - "5432:5432"
     restart: unless-stopped # Redémarre le conteneur sauf s'il a été arrêté manuellement
 
+  # Service Redis pour la file d'attente et le cache
+  redis:
+    image: redis:7-alpine
+    container_name: mon_projet_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
   # Service pour votre application (backend + frontend)
   app:
     # Construit l'image à partir du Dockerfile dans le répertoire courant (.)
@@ -37,8 +47,22 @@ services:
     depends_on:
       # S'assure que le service 'db' est démarré avant le service 'app'.
       - db
+      - redis
+    restart: unless-stopped
+
+  # Service worker ARQ pour exécuter les tâches
+  worker:
+    build: .
+    container_name: mon_projet_worker
+    command: ["arq", "src.worker.main.WorkerSettings"]
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
     restart: unless-stopped
 
 # Définition des volumes nommés
 volumes:
   postgres_data: # Le volume pour les données de la base de données
+  redis_data: # Le volume pour les données Redis

@@ -1,11 +1,12 @@
 from typing import List, Optional, Dict, Any
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 from src.infrastructure.repositories.base_repository import BaseRepository
 from src.infrastructure import sql_models as models
 
 
 class AnalysisRepository(BaseRepository):
-    def create(self, user_id: int, filename: str, status: models.AnalysisStatus = models.AnalysisStatus.PENDING, source_blob_name: str = "", prompt: Optional[str] = None) -> models.Analysis:
+    async def create(self, user_id: int, filename: str, status: models.AnalysisStatus = models.AnalysisStatus.PENDING, source_blob_name: str = "", prompt: Optional[str] = None) -> models.Analysis:
         analysis = models.Analysis(
             user_id=user_id,
             filename=filename,
@@ -14,60 +15,62 @@ class AnalysisRepository(BaseRepository):
             prompt=prompt,
         )
         self.db.add(analysis)
-        self.db.commit()
-        self.db.refresh(analysis)
+        await self.db.commit()
+        await self.db.refresh(analysis)
         return analysis
 
-    def update_filename(self, analysis_id: str, new_filename: str) -> Optional[models.Analysis]:
-        analysis = self.get_by_id(analysis_id)
+    async def update_filename(self, analysis_id: str, new_filename: str) -> Optional[models.Analysis]:
+        analysis = await self.get_by_id(analysis_id)
         if not analysis:
             return None
         analysis.filename = new_filename
-        self.db.commit()
-        self.db.refresh(analysis)
+        await self.db.commit()
+        await self.db.refresh(analysis)
         return analysis
 
-    def delete(self, analysis_id: str) -> None:
-        analysis = self.get_by_id(analysis_id)
+    async def delete(self, analysis_id: str) -> None:
+        analysis = await self.get_by_id(analysis_id)
         if not analysis:
             return
-        self.db.delete(analysis)
-        self.db.commit()
+        await self.db.delete(analysis)
+        await self.db.commit()
 
-    def get_by_id(self, analysis_id: str) -> Optional[models.Analysis]:
-        return (
-            self.db.query(models.Analysis)
-            .filter(models.Analysis.id == analysis_id)
-            .first()
+    async def get_by_id(self, analysis_id: str) -> Optional[models.Analysis]:
+        result = await self.db.execute(
+            select(models.Analysis).where(models.Analysis.id == analysis_id)
         )
+        return result.scalar_one_or_none()
 
-    def get_detailed_by_id(self, analysis_id: str) -> Optional[models.Analysis]:
-        return (
-            self.db.query(models.Analysis)
+    async def get_detailed_by_id(self, analysis_id: str) -> Optional[models.Analysis]:
+        stmt = (
+            select(models.Analysis)
             .options(joinedload(models.Analysis.versions))
-            .filter(models.Analysis.id == analysis_id)
-            .first()
+            .where(models.Analysis.id == analysis_id)
         )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
 
-    def list_by_user(self, user_id: int, skip: int = 0, limit: int = 100) -> List[models.Analysis]:
-        return (
-            self.db.query(models.Analysis)
-            .filter(models.Analysis.user_id == user_id)
+    async def list_by_user(self, user_id: int, skip: int = 0, limit: int = 100) -> List[models.Analysis]:
+        stmt = (
+            select(models.Analysis)
+            .where(models.Analysis.user_id == user_id)
             .order_by(models.Analysis.created_at.desc())
             .offset(skip)
             .limit(limit)
-            .all()
         )
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
 
-    def count_by_user(self, user_id: int) -> int:
-        return (
-            self.db.query(models.Analysis)
-            .filter(models.Analysis.user_id == user_id)
-            .count()
+    async def count_by_user(self, user_id: int) -> int:
+        result = await self.db.execute(
+            select(models.Analysis).where(models.Analysis.user_id == user_id)
         )
+        # SQLAlchemy async count: fetch all IDs or use func.count in select
+        rows = result.scalars().all()
+        return len(rows)
 
-    def update_paths_and_status(self, analysis_id: str, *, status: Optional[models.AnalysisStatus] = None, result_blob_name: Optional[str] = None, transcript_blob_name: Optional[str] = None) -> None:
-        analysis = self.get_by_id(analysis_id)
+    async def update_paths_and_status(self, analysis_id: str, *, status: Optional[models.AnalysisStatus] = None, result_blob_name: Optional[str] = None, transcript_blob_name: Optional[str] = None) -> None:
+        analysis = await self.get_by_id(analysis_id)
         if not analysis:
             return
         if status is not None:
@@ -76,19 +79,19 @@ class AnalysisRepository(BaseRepository):
             analysis.result_blob_name = result_blob_name
         if transcript_blob_name is not None:
             analysis.transcript_blob_name = transcript_blob_name
-        self.db.commit()
+        await self.db.commit()
 
-    def update_status(self, analysis_id: str, status: models.AnalysisStatus) -> None:
-        self.update_paths_and_status(analysis_id, status=status)
+    async def update_status(self, analysis_id: str, status: models.AnalysisStatus) -> None:
+        await self.update_paths_and_status(analysis_id, status=status)
 
-    def update_progress(self, analysis_id: str, progress: int) -> None:
-        analysis = self.get_by_id(analysis_id)
+    async def update_progress(self, analysis_id: str, progress: int) -> None:
+        analysis = await self.get_by_id(analysis_id)
         if not analysis:
             return
         analysis.progress = max(0, min(100, int(progress)))
-        self.db.commit()
+        await self.db.commit()
 
-    def add_version(self, analysis_id: str, prompt_used: str, result_blob_name: str, people_involved: Optional[str] = None, structured_plan: Optional[dict] = None) -> models.AnalysisVersion:
+    async def add_version(self, analysis_id: str, prompt_used: str, result_blob_name: str, people_involved: Optional[str] = None, structured_plan: Optional[dict] = None) -> models.AnalysisVersion:
         version = models.AnalysisVersion(
             analysis_id=analysis_id,
             prompt_used=prompt_used,
@@ -97,13 +100,12 @@ class AnalysisRepository(BaseRepository):
             structured_plan=structured_plan,
         )
         self.db.add(version)
-        self.db.commit()
-        self.db.refresh(version)
+        await self.db.commit()
+        await self.db.refresh(version)
         return version
 
-    def get_version_by_id(self, version_id: str) -> Optional[models.AnalysisVersion]:
-        return (
-            self.db.query(models.AnalysisVersion)
-            .filter(models.AnalysisVersion.id == version_id)
-            .first()
+    async def get_version_by_id(self, version_id: str) -> Optional[models.AnalysisVersion]:
+        result = await self.db.execute(
+            select(models.AnalysisVersion).where(models.AnalysisVersion.id == version_id)
         )
+        return result.scalar_one_or_none()

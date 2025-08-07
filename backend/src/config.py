@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import Field, PostgresDsn, constr
+from pydantic import Field, PostgresDsn, constr, AnyUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,9 +17,12 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: PostgresDsn | str = Field(
-        default="postgresql://user:password@localhost/dbname",
+        default="postgresql+asyncpg://user:password@localhost/dbname",
         description="SQLAlchemy-compatible database URL",
     )
+
+    # Redis / ARQ
+    REDIS_URL: str = Field(default="redis://localhost:6379/0", description="Redis connection URL")
 
     # JWT configuration
     SECRET_KEY: constr(strip_whitespace=True, min_length=1) = Field(

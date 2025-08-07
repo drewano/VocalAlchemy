@@ -12,7 +12,6 @@ import logging
 import litellm
 from src.config import settings
 
-from src.infrastructure.database import engine
 from src.infrastructure import sql_models as models
 
 # Configuration centralisée du logging
@@ -26,8 +25,6 @@ logging.basicConfig(
 if settings.LITELLM_DEBUG:
     litellm.set_verbose = True
     logging.info("LiteLLM verbose mode is enabled.")
-
-models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="POC Audio Analysis Pipeline")
 
@@ -45,15 +42,15 @@ api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(analysis.router, prefix="/analysis", tags=["analysis"]) 
 api_router.include_router(user_prompts.router, prefix="/user-prompts", tags=["user-prompts"])
 
-from src.infrastructure.database import get_db
+from src.infrastructure.database import get_async_db
 from src.infrastructure.repositories.user_prompt_repository import UserPromptRepository
 from src import auth
 
 
 @api_router.get("/prompts")
-async def get_prompts(db=Depends(get_db), user=Depends(auth.get_current_user)):
+async def get_prompts(db=Depends(get_async_db), user=Depends(auth.get_current_user)):
     repo = UserPromptRepository(db)
-    user_prompts = repo.list_by_user(user.id)
+    user_prompts = await repo.list_by_user(user.id)
 
     # Merge: user prompts override predefined on name conflicts
     merged: dict[str, str] = {**PREDEFINED_PROMPTS}

@@ -5,11 +5,11 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure import sql_models as models
 from src.api import schemas
-from src.infrastructure.database import get_db
+from src.infrastructure.database import get_async_db
 from src.config import settings
 from src.infrastructure.repositories.user_repository import UserRepository
 
@@ -43,14 +43,14 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 
-def get_user(db: Session, email: str) -> Optional[models.User]:
+async def get_user(db: AsyncSession, email: str) -> Optional[models.User]:
     repo = UserRepository(db)
-    return repo.get_by_email(email)
+    return await repo.get_by_email(email)
 
 
-def authenticate_user(db: Session, email: str, password: str) -> Optional[models.User]:
+async def authenticate_user(db: AsyncSession, email: str, password: str) -> Optional[models.User]:
     """Authenticate a user by email and password."""
-    user = get_user(db, email)
+    user = await get_user(db, email)
     if not user:
         return None
     if not verify_password(password, user.hashed_password):
@@ -58,7 +58,7 @@ def authenticate_user(db: Session, email: str, password: str) -> Optional[models
     return user
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> models.User:
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_async_db)) -> models.User:
     """Get the current user from the JWT token."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -73,7 +73,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         token_data = schemas.TokenData(email=email)
     except JWTError:
         raise credentials_exception
-    user = get_user(db, email=token_data.email)
+    user = await get_user(db, email=token_data.email)
     if user is None:
         raise credentials_exception
     return user
