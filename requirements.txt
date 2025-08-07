@@ -1,6 +1,5 @@
 fastapi
 uvicorn[standard]
-pydub
 requests
 python-dotenv
 python-multipart
@@ -17,3 +16,4 @@ langextract
 azure-cognitiveservices-speech
 litellm
 azure-storage-blob
+pydub

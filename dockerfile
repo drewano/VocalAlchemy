@@ -34,8 +34,8 @@ ENV PYTHONUNBUFFERED 1
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ffmpeg \
-        ca-certificates \
         libasound2 \
+        ca-certificates \
         libssl3 \
         gstreamer1.0-alsa \
         gstreamer1.0-libav \

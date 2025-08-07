@@ -10,9 +10,18 @@ export interface UserPrompt {
   content: string
 }
 
+export type AnalysisStatus =
+  | 'PENDING'
+  | 'TRANSCRIPTION_IN_PROGRESS'
+  | 'ANALYSIS_PENDING'
+  | 'ANALYSIS_IN_PROGRESS'
+  | 'COMPLETED'
+  | 'TRANSCRIPTION_FAILED'
+  | 'ANALYSIS_FAILED'
+
 export type AnalysisSummary = {
   id: string
-  status: string
+  status: AnalysisStatus
   created_at: string
   filename: string
   transcript_snippet?: string
@@ -43,7 +52,7 @@ export interface ActionPlanItem {
 
 export interface AnalysisDetail {
   id: string
-  status: string
+  status: AnalysisStatus
   created_at: string
   filename: string
   prompt: string | null

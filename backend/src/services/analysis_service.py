@@ -11,6 +11,8 @@ from src.services.external_apis.azure_speech_client import AzureSpeechClient
 from src.services.external_apis.litellm_ai_processor import LiteLLMAIProcessor
 from src.infrastructure.sql_models import AnalysisStatus
 from src.services import pipeline_prompts
+from pydub import AudioSegment
+import os
 
 
 
@@ -100,105 +102,109 @@ class AnalysisService:
         )
         return final_report_content
 
-    def run_full_pipeline(self, analysis_id: str, source_path: str, base_output_dir: str, user_prompt: Optional[str] = None) -> str:
+    def start_transcription_pipeline(self, analysis_id: str, source_path: str, user_prompt: Optional[str]) -> None:
         if not source_path or not isinstance(source_path, str):
             raise ValueError("Invalid source_path provided")
-        if not base_output_dir or not isinstance(base_output_dir, str):
-            raise ValueError("Invalid base_output_dir provided")
         if not os.path.exists(source_path):
             raise FileNotFoundError(f"Source file not found: {source_path}")
 
+        # Définir le chemin du fichier audio normalisé (FLAC)
+        normalized_audio_path = f"{os.path.splitext(source_path)[0]}.flac"
         try:
-            # 1) Update status to PROCESSING
-            self.analysis_repo.update_status(analysis_id, AnalysisStatus.PROCESSING)
+            # 1. Charger l'audio original
+            audio = AudioSegment.from_file(source_path)
+            # 2. Normaliser l'audio: 16kHz, mono, 16-bit
+            normalized_audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+            # 3. Exporter en FLAC
+            normalized_audio.export(normalized_audio_path, format="flac")
 
-            # 2) Submit batch transcription job
-            status_url = self.transcriber.submit_batch_transcription(source_path)
-
-            # 3) Persist job tracking URL on Analysis
+            # 4. Soumettre le FLAC à Azure
+            self.analysis_repo.update_status(analysis_id, AnalysisStatus.TRANSCRIPTION_IN_PROGRESS)
+            status_url = self.transcriber.submit_batch_transcription(normalized_audio_path)
             analysis = self.analysis_repo.get_by_id(analysis_id)
             if analysis:
                 analysis.transcription_job_url = status_url
+                if user_prompt is not None:
+                    analysis.prompt = user_prompt
                 self.analysis_repo.db.commit()
+        except Exception as e:
+            error_details = f"Transcription submission failed. Error type: {type(e).__name__}. Details: {e}"
+            logging.error(error_details)
+            self.analysis_repo.update_status(analysis_id, AnalysisStatus.TRANSCRIPTION_FAILED)
+            analysis = self.analysis_repo.get_by_id(analysis_id)
+            if analysis:
+                analysis.error_message = error_details
+                self.analysis_repo.db.commit()
+            raise
+        finally:
+            # 5. Nettoyer le fichier FLAC temporaire
+            try:
+                if normalized_audio_path and os.path.exists(normalized_audio_path):
+                    os.remove(normalized_audio_path)
+            except Exception:
+                pass
 
-            # 4) Polling loop for job status
-            start_time = time.time()
-            POLLING_TIMEOUT_SECONDS = 3600  # 1 hour
-            while True:
-                # Timeout guard
-                if time.time() - start_time > POLLING_TIMEOUT_SECONDS:
-                    raise TimeoutError("Transcription polling timed out after 1 hour.")
-
-                status_resp = self.transcriber.check_transcription_status(status_url)
-                status = status_resp.get("status") or status_resp.get("statusCode")
-                logging.info(f"Transcription status for {analysis_id}: {status}")
-
-                if str(status).lower() in {"succeeded"}:
-                    break
-                if str(status).lower() == "failed":
-                    # Log full Azure response for debugging/observability
-                    logging.error(f"Azure transcription failed. Full response: {status_resp}")
-                    # Prefer specific errors if present, otherwise include full JSON payload
-                    errors = status_resp.get("errors") or status_resp.get("properties", {}).get("errors")
-                    if not errors:
-                        try:
-                            errors = json.dumps(status_resp, ensure_ascii=False)
-                        except Exception:
-                            errors = str(status_resp)
-                    raise RuntimeError(f"Transcription failed: {errors}")
-
-                # Optionally update progress if provided by service
-                progress = status_resp.get("properties", {}).get("progress")
-                if isinstance(progress, (int, float)):
-                    try:
-                        self.analysis_repo.update_progress(analysis_id, int(progress))
-                    except Exception:
-                        pass
-
-                time.sleep(30)
-
-            # 7) Retrieve files list and fetch final transcription text
-            logging.info("Fetching transcription files list from Azure Speech...")
-            files_response = self.transcriber.get_transcription_files(status_url)
+    def check_transcription_and_run_analysis(self, analysis_id: str, base_output_dir: str) -> None:
+        analysis = self.analysis_repo.get_by_id(analysis_id)
+        if not analysis:
+            raise AnalysisNotFoundException(f"Analysis not found: {analysis_id}")
+        if analysis.status != AnalysisStatus.TRANSCRIPTION_IN_PROGRESS:
+            return
+        if not analysis.transcription_job_url:
+            logging.warning("No transcription_job_url stored for analysis %s", analysis_id)
+            return
+        status_resp = self.transcriber.check_transcription_status(analysis.transcription_job_url)
+        status = str(status_resp.get("status") or status_resp.get("statusCode")).lower()
+        if status == "succeeded":
+            files_response = self.transcriber.get_transcription_files(analysis.transcription_job_url)
             full_text = self.transcriber.get_transcription_result(files_response)
-
-            # 8) Save transcript to file
             os.makedirs(base_output_dir, exist_ok=True)
             transcript_path = os.path.join(base_output_dir, "transcription.txt")
             self._write_text_file(transcript_path, full_text)
+            self.analysis_repo.update_paths_and_status(
+                analysis_id,
+                status=AnalysisStatus.ANALYSIS_PENDING,
+                transcript_path=transcript_path,
+            )
+            try:
+                # Start background analysis task; actual scheduling handled by caller/framework
+                self.run_ai_analysis_pipeline(analysis_id, base_output_dir)
+            except Exception as e:
+                logging.error("Failed to start AI analysis background task: %s", e)
+        elif status == "failed":
+            logging.error(f"Azure transcription failed. Full response: {status_resp}")
+            self.analysis_repo.update_status(analysis_id, AnalysisStatus.TRANSCRIPTION_FAILED)
 
-            # 9) Run downstream analysis pipeline
-            final_report_content = self._execute_analysis_pipeline(full_text, user_prompt)
-
-            # 10) Save report and create version entry
+    def run_ai_analysis_pipeline(self, analysis_id: str, base_output_dir: str) -> str:
+        analysis = self.analysis_repo.get_by_id(analysis_id)
+        if not analysis:
+            raise AnalysisNotFoundException(f"Analysis not found: {analysis_id}")
+        if not analysis.transcript_path or not os.path.exists(analysis.transcript_path):
+            raise FileNotFoundError("Transcript file not found for analysis")
+        with open(analysis.transcript_path, "r", encoding="utf-8") as f:
+            transcript = f.read()
+        try:
+            self.analysis_repo.update_status(analysis_id, AnalysisStatus.ANALYSIS_IN_PROGRESS)
+            final_report_content = self._execute_analysis_pipeline(transcript, analysis.prompt)
+            os.makedirs(base_output_dir, exist_ok=True)
             report_path = os.path.join(base_output_dir, "report.txt")
             self._write_text_file(report_path, final_report_content)
-
             self.analysis_repo.add_version(
                 analysis_id=analysis_id,
-                prompt_used=user_prompt or "",
+                prompt_used=analysis.prompt or "",
                 result_path=report_path,
                 people_involved=None,
                 structured_plan=None,
             )
-
-            # Finish
-            self.analysis_repo.update_paths_and_status(
-                analysis_id,
-                status=AnalysisStatus.COMPLETED,
-                transcript_path=transcript_path,
-            )
+            self.analysis_repo.update_paths_and_status(analysis_id, status=AnalysisStatus.COMPLETED)
             self.analysis_repo.update_progress(analysis_id, 100)
-
             return report_path
         except Exception as e:
-            error_details = f"Pipeline failed unexpectedly. Error type: {type(e).__name__}. Details: {e}"
+            error_details = f"AI analysis failed. Error type: {type(e).__name__}. Details: {e}"
             logging.error(error_details)
-            # Mark FAILED and persist error details
-            self.analysis_repo.update_paths_and_status(analysis_id, status=AnalysisStatus.FAILED)
+            self.analysis_repo.update_status(analysis_id, AnalysisStatus.ANALYSIS_FAILED)
             analysis = self.analysis_repo.get_by_id(analysis_id)
             if analysis:
-                analysis.status = AnalysisStatus.FAILED
                 analysis.error_message = error_details
                 self.analysis_repo.db.commit()
             raise
@@ -223,31 +229,3 @@ class AnalysisService:
                 pass
 
         self.analysis_repo.delete(analysis_id)
-
-    def rerun_analysis_from_transcript(self, analysis_id: str, transcript: str, new_prompt: Optional[str], base_output_dir: str) -> str:
-        if not transcript or not isinstance(transcript, str):
-            raise ValueError("Invalid transcript provided")
-        if not base_output_dir or not isinstance(base_output_dir, str):
-            raise ValueError("Invalid base_output_dir provided")
-
-        self.analysis_repo.update_status(analysis_id, AnalysisStatus.PROCESSING)
-
-        # Exécuter le pipeline factorisé
-        final_report_content = self._execute_analysis_pipeline(transcript, new_prompt)
-
-        # Sauvegarde dans un fichier versionné pour ne pas écraser l'existant
-        report_path = os.path.join(base_output_dir, f"report_{int(__import__('time').time())}.txt")
-        self._write_text_file(report_path, final_report_content)
-
-        # Versionnement
-        self.analysis_repo.add_version(
-            analysis_id=analysis_id,
-            prompt_used=new_prompt or "",
-            result_path=report_path,
-            people_involved=None,
-            structured_plan=None,
-        )
-
-        self.analysis_repo.update_status(analysis_id, AnalysisStatus.COMPLETED)
-        self.analysis_repo.update_progress(analysis_id, 100)
-        return report_path

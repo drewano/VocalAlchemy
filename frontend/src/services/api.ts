@@ -73,15 +73,7 @@ export async function processAudio(file: File, prompt: string): Promise<{ analys
   return response.data
 }
 
-/**
- * Récupère le statut d'une tâche de traitement
- * @param taskId L'ID de la tâche à vérifier
- * @returns Un objet contenant le statut de la tâche
- */
-export async function getTaskStatus(analysisId: string): Promise<{ status: string; has_result: boolean; has_transcript: boolean }> {
-  const response = await api.get(`/analysis/status/${analysisId}`)
-  return response.data
-}
+
 
 /**
  * Récupère le fichier résultat ou transcription d'une tâche terminée

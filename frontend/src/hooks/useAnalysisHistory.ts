@@ -24,7 +24,7 @@ export function useAnalysisHistory() {
           status:
             it.status === 'COMPLETED'
               ? 'completed'
-              : it.status === 'FAILED'
+              : (it.status === 'TRANSCRIPTION_FAILED' || it.status === 'ANALYSIS_FAILED')
               ? 'failed'
               : 'processing',
         }))

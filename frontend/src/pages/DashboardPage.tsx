@@ -102,13 +102,15 @@ const DashboardPage: React.FC = () => {
             ) : (
               <ul className="divide-y divide-gray-200">
                 {filtered.map((item) => {
-                  const statusIcon = item.status === 'completed'
+                  const isCompleted = item.status === 'COMPLETED'
+                  const isFailed = item.status === 'TRANSCRIPTION_FAILED' || item.status === 'ANALYSIS_FAILED'
+                  const isProcessing = !isCompleted && !isFailed
+
+                  const statusIcon = isCompleted
                     ? <CheckCircle2 className="text-green-500" />
-                    : item.status === 'failed'
+                    : isFailed
                       ? <XCircle className="text-red-500" />
                       : <Hourglass className="text-yellow-500" />
-
-                  const isProcessing = item.status === 'processing'
 
                   return (
                     <li key={item.id} className="flex items-center py-4 space-x-4">
@@ -119,7 +121,7 @@ const DashboardPage: React.FC = () => {
                         <p className="text-sm font-medium text-gray-900 truncate">{item.filename}</p>
                         <p className="text-xs text-gray-500">{new Date(item.created_at).toLocaleString()}</p>
                       </div>
-                      {item.status === 'failed' ? (
+                      {isFailed ? (
                         <Button variant="ghost" size="sm" onClick={() => navigate(`/analysis/${item.id}`)}>
                           Réessayer
                         </Button>

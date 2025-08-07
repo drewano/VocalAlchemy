@@ -7,9 +7,10 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { LoaderCircle } from 'lucide-react'
 import { useAnalysisDetail } from '@/hooks/useAnalysisDetail'
-import { StatusDisplay } from '@/components/StatusDisplay'
+
 import AudioPlayer from '@/components/AudioPlayer'
 import ActionPlanTable from '@/components/ActionPlanTable'
+import { Spinner } from '@/components/ui/spinner'
 
 const AnalysisDetailPage: React.FC = () => {
   const { analysisId } = useParams<{ analysisId: string }>()
@@ -86,13 +87,11 @@ const AnalysisDetailPage: React.FC = () => {
     )
   }
 
-  if (analysisData && (analysisData.status === 'PROCESSING' || analysisData.status === 'PENDING')) {
-    return (
-      <div className="container mx-auto py-8">
-        <StatusDisplay status={analysisData.status} />
-      </div>
-    )
-  }
+  
+
+  // Simplified flags for spinners
+  const isTranscribing = analysisData.status === 'PENDING' || analysisData.status === 'TRANSCRIPTION_IN_PROGRESS'
+  const isAnalyzing = analysisData.status === 'ANALYSIS_PENDING' || analysisData.status === 'ANALYSIS_IN_PROGRESS'
 
   return (
     <div className="container mx-auto py-8 space-y-8">
@@ -115,7 +114,11 @@ const AnalysisDetailPage: React.FC = () => {
             </div>
             <div>
               <div className="text-sm text-muted-foreground">Personnes concernées</div>
-              <div className="font-medium whitespace-pre-wrap">{currentPeople || '—'}</div>
+              {analysisData.status === 'COMPLETED' ? (
+                <div className="font-medium whitespace-pre-wrap">{currentPeople || '—'}</div>
+              ) : (
+                <div className="text-sm text-muted-foreground">Disponible après l'analyse.</div>
+              )}
             </div>
             <div className="sm:col-span-3">
               <AudioPlayer analysisId={analysisData.id} />
@@ -124,7 +127,15 @@ const AnalysisDetailPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      <ActionPlanTable actionPlan={actionPlan} onItemClick={handleActionItemClick} />
+      {analysisData.status === 'COMPLETED' ? (
+        <ActionPlanTable actionPlan={actionPlan} onItemClick={handleActionItemClick} />
+      ) : (
+        <Card>
+          <CardContent>
+            <div className="text-sm text-muted-foreground p-4">Plan d'action disponible après l'analyse.</div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Panneau de gauche: Transcription */}
@@ -133,9 +144,13 @@ const AnalysisDetailPage: React.FC = () => {
             <CardTitle>Transcription</CardTitle>
           </CardHeader>
           <CardContent>
-            <pre className="bg-muted/50 p-4 rounded-lg max-h-[70vh] overflow-y-auto">
-              <code ref={transcriptRef as any} className="whitespace-pre-wrap">{analysisData.transcript}</code>
-            </pre>
+            {isTranscribing ? (
+              <Spinner text="Transcription en cours avec Azure AI Speech..." />
+            ) : (
+              <pre className="bg-muted/50 p-4 rounded-lg max-h-[70vh] overflow-y-auto">
+                <code ref={transcriptRef as any} className="whitespace-pre-wrap">{analysisData.transcript}</code>
+              </pre>
+            )}
           </CardContent>
         </Card>
 
@@ -173,7 +188,9 @@ const AnalysisDetailPage: React.FC = () => {
               <CardTitle>Résultat de l'analyse</CardTitle>
             </CardHeader>
             <CardContent>
-              {currentAnalysis ? (
+              {isAnalyzing ? (
+                <Spinner text="L'IA analyse la transcription..." />
+              ) : currentAnalysis ? (
                 <pre className="bg-muted/50 p-4 rounded-lg max-h-[40vh] overflow-y-auto">
                   <code className="whitespace-pre-wrap">{currentAnalysis}</code>
                 </pre>

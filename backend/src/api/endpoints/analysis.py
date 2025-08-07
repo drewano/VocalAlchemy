@@ -13,7 +13,6 @@ from src.infrastructure.repositories.analysis_repository import AnalysisReposito
 from src.services.analysis_service import AnalysisService, AnalysisNotFoundException
 from src.services.external_apis.azure_speech_client import AzureSpeechClient
 from src.services.external_apis.litellm_ai_processor import LiteLLMAIProcessor
-from src.services.audio_processor import normalize_audio_for_azure
 from src.config import settings
 
 router = APIRouter()
@@ -86,16 +85,11 @@ async def process_audio(
             content = await file.read()
             await out_file.write(content)
 
-        # Normalize audio before sending to Azure
-        normalized_audio_path = os.path.splitext(source_path)[0] + ".wav"
-        normalize_audio_for_azure(input_path=source_path, output_path=normalized_audio_path)
-
-        # Background task to run full pipeline using normalized audio
+        # Background task: start only the transcription pipeline (no polling)
         background_tasks.add_task(
-            analysis_service.run_full_pipeline,
+            analysis_service.start_transcription_pipeline,
             analysis_id,
-            normalized_audio_path,
-            base_output_dir,
+            source_path,
             prompt,
         )
 
@@ -147,15 +141,13 @@ async def rerun_analysis(
     task_dir = os.path.dirname(transcript_path) or os.path.join("uploads", analysis_id)
     os.makedirs(task_dir, exist_ok=True)
 
-    # Update status to PROCESSING before launching background task
-    analysis_repo.update_status(analysis_id, models.AnalysisStatus.PROCESSING)
+    # Update status to ANALYSIS_PENDING before launching background task
+    analysis_repo.update_status(analysis_id, models.AnalysisStatus.ANALYSIS_PENDING)
 
-    # 4. Launch background task to rerun analysis
+    # 4. Launch background task to rerun analysis with existing transcript
     background_tasks.add_task(
-        analysis_service.rerun_analysis_from_transcript,
+        analysis_service.run_ai_analysis_pipeline,
         analysis_id=analysis_id,
-        transcript=transcript,
-        new_prompt=prompt,
         base_output_dir=task_dir,
     )
 
@@ -179,24 +171,7 @@ async def delete_analysis(
     return
 
 
-@router.get("/status/{analysis_id}")
-async def get_status(
-    analysis_id: str,
-    current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
-):
-    analysis = analysis_repo.get_by_id(analysis_id)
-    if not analysis:
-        raise HTTPException(status_code=404, detail="Analysis not found")
-    if analysis.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
 
-    return {
-        "status": analysis.status,
-        "has_result": bool(analysis.result_path and os.path.exists(analysis.result_path)),
-        "has_transcript": bool(analysis.transcript_path and os.path.exists(analysis.transcript_path)),
-    }
 
 
 @router.get("/result/{analysis_id}")
@@ -353,15 +328,25 @@ async def list_analyses(
 @router.get("/{analysis_id}")
 async def get_analysis_detail(
     analysis_id: str,
+    background_tasks: BackgroundTasks,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+    analysis_service: AnalysisService = Depends(get_analysis_service),
 ) -> schemas.AnalysisDetail:
     a = analysis_repo.get_detailed_by_id(analysis_id)
     if not a:
         raise HTTPException(status_code=404, detail="Analysis not found")
     if a.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
+
+    # Backend polling step for transcription completion
+    if a.status == models.AnalysisStatus.TRANSCRIPTION_IN_PROGRESS:
+        base_output_dir = os.path.join("uploads", analysis_id)
+        # This call may update status and enqueue analysis
+        analysis_service.check_transcription_and_run_analysis(analysis_id, base_output_dir)
+        # Reload fresh state after potential update
+        a = analysis_repo.get_detailed_by_id(analysis_id)
 
     # Sort versions by created_at desc
     versions_sorted = sorted(a.versions or [], key=lambda v: v.created_at or 0, reverse=True)
@@ -391,7 +376,6 @@ async def get_analysis_detail(
         # Extract structured plan if available
         try:
             if latest_version.structured_plan is not None:
-                # Expecting dict like {"extractions": [...]} or already a list
                 if isinstance(latest_version.structured_plan, dict) and "extractions" in latest_version.structured_plan:
                     action_plan = latest_version.structured_plan.get("extractions")
                 elif isinstance(latest_version.structured_plan, list):

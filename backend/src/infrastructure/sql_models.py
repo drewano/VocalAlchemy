@@ -10,9 +10,12 @@ from src.infrastructure.database import Base
 
 class AnalysisStatus(enum.Enum):
     PENDING = "PENDING"
-    PROCESSING = "PROCESSING"
+    TRANSCRIPTION_IN_PROGRESS = "TRANSCRIPTION_IN_PROGRESS"
+    ANALYSIS_PENDING = "ANALYSIS_PENDING"  # Transcription terminée, en attente d'analyse
+    ANALYSIS_IN_PROGRESS = "ANALYSIS_IN_PROGRESS"
     COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
+    TRANSCRIPTION_FAILED = "TRANSCRIPTION_FAILED"
+    ANALYSIS_FAILED = "ANALYSIS_FAILED"
 
 class User(Base):
     __tablename__ = "users"

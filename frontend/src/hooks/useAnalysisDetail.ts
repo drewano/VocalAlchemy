@@ -15,34 +15,6 @@ export function useAnalysisDetail(analysisId?: string) {
   useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null
 
-    const pollStatus = async () => {
-      if (!analysisId) return
-      try {
-        const st = await api.getTaskStatus(analysisId)
-        if (st.status === 'COMPLETED' || st.status === 'FAILED') {
-          // Final state reached, refresh full detail on COMPLETED and stop polling
-          if (st.status === 'COMPLETED') {
-            const fresh = await api.getAnalysisDetail(analysisId)
-            setAnalysisData(fresh)
-            setCurrentPrompt(fresh.prompt || '')
-            setCurrentAnalysis(fresh.latest_analysis || 'Aucune analyse disponible.')
-            setCurrentPeople(fresh.people_involved || 'Non spécifié')
-            setActionPlan(fresh.action_plan || null)
-          } else {
-            // FAILED: only update status if we already have some data
-            setAnalysisData((prev) => (prev ? { ...prev, status: 'FAILED' as any } : prev))
-          }
-          return
-        }
-        // Still processing or pending: update status only and schedule next poll
-        setAnalysisData((prev) => (prev ? { ...prev, status: st.status as any } : prev))
-        timeoutId = setTimeout(pollStatus, 3000)
-      } catch (e) {
-        // On error, try again later
-        timeoutId = setTimeout(pollStatus, 3000)
-      }
-    }
-
     const load = async () => {
       if (!analysisId) return
       setIsLoading(true)
@@ -54,8 +26,13 @@ export function useAnalysisDetail(analysisId?: string) {
         setCurrentAnalysis(data.latest_analysis || 'Aucune analyse disponible.')
         setCurrentPeople(data.people_involved || 'Non spécifié')
         setActionPlan(data.action_plan || null)
-        if (data.status === 'PROCESSING' || data.status === 'PENDING') {
-          timeoutId = setTimeout(pollStatus, 3000)
+        if (
+          data.status === 'PENDING' ||
+          data.status === 'TRANSCRIPTION_IN_PROGRESS' ||
+          data.status === 'ANALYSIS_PENDING' ||
+          data.status === 'ANALYSIS_IN_PROGRESS'
+        ) {
+          timeoutId = setTimeout(load, 3000)
         }
       } catch (e: any) {
         setError(e)

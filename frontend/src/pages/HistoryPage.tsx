@@ -45,12 +45,12 @@ export default function HistoryPage() {
                         className={
                           a.status === 'COMPLETED'
                             ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 px-2 py-0.5 rounded text-xs'
-                            : a.status === 'FAILED'
+                            : (a.status === 'TRANSCRIPTION_FAILED' || a.status === 'ANALYSIS_FAILED')
                             ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300 px-2 py-0.5 rounded text-xs'
                             : 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 px-2 py-0.5 rounded text-xs'
                         }
                       >
-                        {a.status === 'COMPLETED' ? 'Terminé' : a.status === 'FAILED' ? 'Échec' : 'En cours'}
+                        {a.status === 'COMPLETED' ? 'Terminé' : (a.status === 'TRANSCRIPTION_FAILED' || a.status === 'ANALYSIS_FAILED') ? 'Échec' : 'En cours'}
                       </span>
                     </TableCell>
                     <TableCell className="text-right">

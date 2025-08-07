@@ -63,4 +63,25 @@ async def get_prompts(db=Depends(get_db), user=Depends(auth.get_current_user)):
 
 app.include_router(api_router, prefix="/api")
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# Route catch-all pour servir le SPA React et les fichiers statiques
+from fastapi.responses import FileResponse
+
+@app.get("/{full_path:path}")
+async def serve_react_app(full_path: str):
+    """
+    Sert les fichiers statiques ou l'application React.
+    - Si le chemin correspond à un fichier existant dans /static, le sert.
+    - Sinon, renvoie index.html pour que React Router gère la route.
+    """
+    static_file_path = os.path.join("static", full_path)
+    if os.path.isfile(static_file_path):
+        return FileResponse(static_file_path)
+
+    # Si le chemin est un répertoire (ex: /), cherche index.html
+    if os.path.isdir(static_file_path):
+        index_path = os.path.join(static_file_path, "index.html")
+        if os.path.isfile(index_path):
+            return FileResponse(index_path)
+
+    # Pour toutes les autres routes, c'est le SPA qui gère
+    return FileResponse("static/index.html")
