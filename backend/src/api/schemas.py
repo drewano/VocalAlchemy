@@ -80,6 +80,10 @@ class AnalysisListResponse(BaseModel):
 class AnalysisRename(BaseModel):
     filename: str
 
+class AnalysisStatusResponse(BaseModel):
+    id: str
+    status: str
+
 # Token schemas
 class Token(BaseModel):
     access_token: str

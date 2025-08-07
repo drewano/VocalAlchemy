@@ -62,10 +62,6 @@ COPY backend/src ./src
 # Votre `main.py` est configuré pour servir les fichiers de ce dossier.
 COPY --from=frontend-builder /app/frontend/dist /app/static
 
-# Création du répertoire 'uploads' que l'application utilise pour stocker les fichiers temporaires.
-# L'application aura les droits pour écrire dans ce dossier à l'intérieur du conteneur.
-RUN mkdir uploads
-
 # Exposition du port sur lequel FastAPI va écouter.
 EXPOSE 8000
 

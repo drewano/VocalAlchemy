@@ -5,12 +5,12 @@ from src.infrastructure import sql_models as models
 
 
 class AnalysisRepository(BaseRepository):
-    def create(self, user_id: int, filename: str, status: models.AnalysisStatus = models.AnalysisStatus.PENDING, source_file_path: str = "", prompt: Optional[str] = None) -> models.Analysis:
+    def create(self, user_id: int, filename: str, status: models.AnalysisStatus = models.AnalysisStatus.PENDING, source_blob_name: str = "", prompt: Optional[str] = None) -> models.Analysis:
         analysis = models.Analysis(
             user_id=user_id,
             filename=filename,
             status=status,
-            source_file_path=source_file_path,
+            source_blob_name=source_blob_name,
             prompt=prompt,
         )
         self.db.add(analysis)

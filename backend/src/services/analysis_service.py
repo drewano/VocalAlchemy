@@ -13,6 +13,7 @@ from src.infrastructure.sql_models import AnalysisStatus
 from src.services import pipeline_prompts
 from pydub import AudioSegment
 import os
+import io
 
 
 
@@ -21,7 +22,7 @@ class AnalysisNotFoundException(Exception):
 
 
 class Transcriber(Protocol):
-    def submit_batch_transcription(self, file_path: str) -> str:
+    def submit_batch_transcription(self, file_content: bytes, original_filename: str, blob_name: str) -> str:
         ...
 
     def check_transcription_status(self, status_url: str) -> dict:
@@ -31,6 +32,9 @@ class Transcriber(Protocol):
         ...
 
     def get_transcription_result(self, files_response: dict) -> str:
+        ...
+
+    def delete_blob(self, blob_name: str) -> None:
         ...
 
 
@@ -102,30 +106,31 @@ class AnalysisService:
         )
         return final_report_content
 
-    def start_transcription_pipeline(self, analysis_id: str, source_path: str, user_prompt: Optional[str]) -> None:
-        if not source_path or not isinstance(source_path, str):
-            raise ValueError("Invalid source_path provided")
-        if not os.path.exists(source_path):
-            raise FileNotFoundError(f"Source file not found: {source_path}")
+    def start_transcription_pipeline(self, analysis_id: str, file_content: bytes, filename: str, blob_name: str) -> None:
+        if not isinstance(file_content, (bytes, bytearray)) or len(file_content) == 0:
+            raise ValueError("Invalid file_content provided")
+        if not filename or not isinstance(filename, str):
+            raise ValueError("Invalid filename provided")
+        if not blob_name or not isinstance(blob_name, str):
+            raise ValueError("Invalid blob_name provided")
 
-        # Définir le chemin du fichier audio normalisé (FLAC)
-        normalized_audio_path = f"{os.path.splitext(source_path)[0]}.flac"
         try:
-            # 1. Charger l'audio original
-            audio = AudioSegment.from_file(source_path)
+            # 1. Charger l'audio original depuis la mémoire
+            audio = AudioSegment.from_file(io.BytesIO(file_content))
             # 2. Normaliser l'audio: 16kHz, mono, 16-bit
             normalized_audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-            # 3. Exporter en FLAC
-            normalized_audio.export(normalized_audio_path, format="flac")
+            # 3. Exporter en FLAC en mémoire
+            buf = io.BytesIO()
+            normalized_audio.export(buf, format="flac")
+            buf.seek(0)
+            normalized_bytes = buf.read()
 
             # 4. Soumettre le FLAC à Azure
             self.analysis_repo.update_status(analysis_id, AnalysisStatus.TRANSCRIPTION_IN_PROGRESS)
-            status_url = self.transcriber.submit_batch_transcription(normalized_audio_path)
+            status_url = self.transcriber.submit_batch_transcription(normalized_bytes, filename, blob_name)
             analysis = self.analysis_repo.get_by_id(analysis_id)
             if analysis:
                 analysis.transcription_job_url = status_url
-                if user_prompt is not None:
-                    analysis.prompt = user_prompt
                 self.analysis_repo.db.commit()
         except Exception as e:
             error_details = f"Transcription submission failed. Error type: {type(e).__name__}. Details: {e}"
@@ -136,13 +141,6 @@ class AnalysisService:
                 analysis.error_message = error_details
                 self.analysis_repo.db.commit()
             raise
-        finally:
-            # 5. Nettoyer le fichier FLAC temporaire
-            try:
-                if normalized_audio_path and os.path.exists(normalized_audio_path):
-                    os.remove(normalized_audio_path)
-            except Exception:
-                pass
 
     def check_transcription_and_run_analysis(self, analysis_id: str, base_output_dir: str) -> None:
         analysis = self.analysis_repo.get_by_id(analysis_id)
@@ -216,12 +214,22 @@ class AnalysisService:
         if analysis.user_id != user_id:
             raise PermissionError('Access denied')
 
+        # Delete source blob in Azure Storage if available
+        try:
+            if getattr(analysis, "source_blob_name", None):
+                self.transcriber.delete_blob(analysis.source_blob_name)
+        except Exception as e:
+            logging.warning(f"Failed to delete source blob for analysis {analysis_id}: {e}")
+
+        # Remove local outputs (transcript, reports)
         base_dir = None
-        if analysis.source_file_path:
-            try:
-                base_dir = os.path.dirname(analysis.source_file_path)
-            except Exception:
-                base_dir = None
+        try:
+            possible_paths = [analysis.transcript_path, analysis.result_path]
+            existing = [p for p in possible_paths if p]
+            if existing:
+                base_dir = os.path.dirname(existing[0])
+        except Exception:
+            base_dir = None
         if base_dir and os.path.exists(base_dir):
             try:
                 shutil.rmtree(base_dir)

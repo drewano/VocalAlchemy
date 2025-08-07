@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { PredefinedPrompts, AnalysisDetail, AnalysisListResponse } from '@/types'
+import type { PredefinedPrompts, AnalysisDetail, AnalysisListResponse, AnalysisStatusResponse } from '@/types'
 
 // Types locaux alignés avec AuthContext
 interface User {
@@ -114,19 +114,19 @@ export async function deleteAnalysis(analysisId: string): Promise<void> {
   await api.delete(`/analysis/${analysisId}`)
 }
 
+export async function checkAnalysisStatus(analysisId: string): Promise<AnalysisStatusResponse> {
+  const res = await api.get(`/analysis/status/${analysisId}`)
+  return res.data
+}
+
 export async function renameAnalysis(analysisId: string, newName: string): Promise<void> {
   await api.patch(`/analysis/${analysisId}/rename`, { filename: newName })
 }
 
-// Fonction utilitaire pour construire l'URL du fichier audio (aucun appel axios)
-export function getAudioFileUrl(analysisId: string): string {
-  return `/api/analysis/audio/${analysisId}`
-}
-
-// Récupère le fichier audio (authentifié) en tant que Blob
-export async function getAudioFileBlob(analysisId: string): Promise<Blob> {
-  const res = await api.get(`/analysis/audio/${analysisId}`, { responseType: 'blob' })
-  return res.data
+// Récupère une URL SAS pour le fichier audio original
+export async function getAudioFileSasUrl(analysisId: string): Promise<string> {
+  const res = await api.get(`/analysis/audio/${analysisId}`)
+  return res.data.url
 }
 
 // User prompts CRUD moved to prompts.api.ts

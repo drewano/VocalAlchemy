@@ -12,41 +12,68 @@ export function useAnalysisDetail(analysisId?: string) {
   const [isRerunning, setIsRerunning] = useState<boolean>(false)
   const [error, setError] = useState<{ message: string; status: number } | null>(null)
 
-  useEffect(() => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null
-
-    const load = async () => {
-      if (!analysisId) return
-      setIsLoading(true)
-      setError(null)
-      try {
-        const data = await api.getAnalysisDetail(analysisId)
-        setAnalysisData(data)
-        setCurrentPrompt(data.prompt || '')
-        setCurrentAnalysis(data.latest_analysis || 'Aucune analyse disponible.')
-        setCurrentPeople(data.people_involved || 'Non spécifié')
-        setActionPlan(data.action_plan || null)
-        if (
-          data.status === 'PENDING' ||
-          data.status === 'TRANSCRIPTION_IN_PROGRESS' ||
-          data.status === 'ANALYSIS_PENDING' ||
-          data.status === 'ANALYSIS_IN_PROGRESS'
-        ) {
-          timeoutId = setTimeout(load, 3000)
-        }
-      } catch (e: any) {
-        setError(e)
-        console.error('Failed to load analysis detail', e)
-      } finally {
-        setIsLoading(false)
-      }
-    }
-    load()
-
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId)
+  // Step 1: isolate full load in useCallback
+  const load = useCallback(async () => {
+    if (!analysisId) return
+    setIsLoading(true)
+    setError(null)
+    try {
+      const data = await api.getAnalysisDetail(analysisId)
+      setAnalysisData(data)
+      setCurrentPrompt(data.prompt || '')
+      setCurrentAnalysis(data.latest_analysis || 'Aucune analyse disponible.')
+      setCurrentPeople(data.people_involved || 'Non spécifié')
+      setActionPlan(data.action_plan || null)
+    } catch (e: any) {
+      setError(e)
+      console.error('Failed to load analysis detail', e)
+    } finally {
+      setIsLoading(false)
     }
   }, [analysisId])
+
+  // Step 2: initial load once on analysisId change
+  useEffect(() => {
+    load()
+  }, [analysisId, load])
+
+  // Step 3: lightweight polling based on status
+  useEffect(() => {
+    if (!analysisId || !analysisData?.status) return
+
+    const inProgressStatuses = new Set([
+      'PENDING',
+      'TRANSCRIPTION_IN_PROGRESS',
+      'ANALYSIS_PENDING',
+      'ANALYSIS_IN_PROGRESS',
+    ])
+
+    let intervalId: ReturnType<typeof setInterval> | null = null
+
+    if (inProgressStatuses.has(analysisData.status)) {
+      intervalId = setInterval(() => {
+        api
+          .checkAnalysisStatus(analysisId)
+          .then((res) => {
+            const newStatus = res.status
+            setAnalysisData((prev) => (prev ? { ...prev, status: newStatus } : prev))
+            if (!inProgressStatuses.has(newStatus)) {
+              if (intervalId) clearInterval(intervalId)
+              // Fetch full data one last time to get transcript/report
+              load()
+            }
+          })
+          .catch((e) => {
+            // surface error but do not break UI completely
+            setError(e)
+          })
+      }, 3000)
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId)
+    }
+  }, [analysisData?.status, analysisId, load])
 
   const rerunAnalysis = useCallback(async () => {
     if (!analysisId || !currentPrompt.trim()) return

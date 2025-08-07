@@ -39,7 +39,8 @@ class Analysis(Base):
     error_message: Mapped[str] = mapped_column(String, nullable=True)
     progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     filename = Column(String, nullable=False)
-    source_file_path = Column(String, nullable=False)
+    # Nom du blob dans Azure Storage correspondant à la source
+    source_blob_name = Column(String, nullable=False)
     result_path = Column(String, nullable=True)
     transcript_path = Column(String, nullable=True)
     transcription_job_url: Mapped[str] = mapped_column(String, nullable=True)

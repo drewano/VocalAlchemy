@@ -67,3 +67,8 @@ export interface AnalysisListResponse {
   items: AnalysisSummary[]
   total: number
 }
+
+export interface AnalysisStatusResponse {
+  id: string;
+  status: AnalysisStatus;
+}

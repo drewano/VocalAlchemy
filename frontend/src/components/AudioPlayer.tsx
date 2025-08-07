@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getAudioFileBlob } from '@/services/api'
+import { getAudioFileSasUrl } from '@/services/api'
 import { Skeleton } from '@/components/ui/skeleton'
 
 type Props = {
@@ -12,17 +12,15 @@ export default function AudioPlayer({ analysisId }: Props) {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    let objectUrl: string | null = null
     let cancelled = false
 
     async function load() {
       setIsLoading(true)
       setError(null)
       try {
-        const blob = await getAudioFileBlob(analysisId)
+        const url = await getAudioFileSasUrl(analysisId)
         if (cancelled) return
-        objectUrl = URL.createObjectURL(blob)
-        setAudioSrc(objectUrl)
+        setAudioSrc(url)
       } catch (e: any) {
         if (cancelled) return
         setError(e?.message || 'Erreur lors du chargement de l\'audio')
@@ -35,7 +33,6 @@ export default function AudioPlayer({ analysisId }: Props) {
 
     return () => {
       cancelled = true
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
   }, [analysisId])
 

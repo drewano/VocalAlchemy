@@ -4,6 +4,7 @@ import os
 import uuid
 import aiofiles
 from sqlalchemy.orm import Session, joinedload
+from fastapi.responses import JSONResponse
 
 from src.infrastructure import sql_models as models
 from src.api import schemas
@@ -17,12 +18,11 @@ from src.config import settings
 
 router = APIRouter()
 
+# Dependency providers (grouped at top for clarity and to avoid NameError in Depends)
+from functools import lru_cache
+
 def get_analysis_repository(db: Session = Depends(get_db)) -> AnalysisRepository:
     return AnalysisRepository(db)
-
-# External clients dependencies
-
-from functools import lru_cache
 
 @lru_cache()
 def get_transcriber() -> AzureSpeechClient:
@@ -35,7 +35,6 @@ def get_transcriber() -> AzureSpeechClient:
 
 
 def get_ai_analyzer() -> LiteLLMAIProcessor:
-    # LiteLLM/Azure AI: model name driven; API key/base should be set in environment for litellm
     return LiteLLMAIProcessor(model_name=settings.AZURE_AI_MODEL_NAME)
 
 
@@ -50,6 +49,26 @@ def get_analysis_service(
         ai_analyzer=ai_analyzer,
     )
 
+@router.get("/status/{analysis_id}", response_model=schemas.AnalysisStatusResponse)
+async def get_analysis_status(
+    analysis_id: str,
+    current_user: models.User = Depends(get_current_user),
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+    analysis_service: AnalysisService = Depends(get_analysis_service),
+):
+    analysis = analysis_repo.get_by_id(analysis_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    if analysis.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if analysis.status == models.AnalysisStatus.TRANSCRIPTION_IN_PROGRESS:
+        base_output_dir = os.path.join("uploads", analysis_id)
+        analysis_service.check_transcription_and_run_analysis(analysis_id, base_output_dir)
+        analysis = analysis_repo.get_by_id(analysis_id)
+
+    return schemas.AnalysisStatusResponse(id=analysis.id, status=analysis.status)
+
 # Alias direct pour compat: POST /api/process-audio/
 @router.post("/process-audio/", tags=["alias"])  # réel: /api/analysis/process-audio/
 async def process_audio(
@@ -60,52 +79,34 @@ async def process_audio(
     analysis_service: AnalysisService = Depends(get_analysis_service),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
 ):
-    # 1. Create analysis row with temporary path
+    # 1. Generate a unique blob name and read file content in memory
+    blob_name = f"{current_user.id}/{uuid.uuid4()}-{file.filename}"
+    content = await file.read()
+
+    # 2. Create analysis row storing the blob name
     analysis = analysis_repo.create(
         user_id=current_user.id,
         filename=file.filename or "uploaded_audio",
         status=models.AnalysisStatus.PENDING,
-        source_file_path=file.filename or "uploaded_audio",
+        source_blob_name=blob_name,
         prompt=prompt,
     )
 
     analysis_id = analysis.id
 
-    # 3. Prepare output dir and destination path
-    base_output_dir = os.path.join("uploads", analysis_id)
-    source_path = os.path.join(base_output_dir, file.filename)
-
-    # 5. Ensure directories
-    os.makedirs(base_output_dir, exist_ok=True)
-
-    # 6. Update record now that we know the final source path
+    # 3. Launch background transcription using in-memory bytes
     try:
-        # Save uploaded file asynchronously
-        async with aiofiles.open(source_path, "wb") as out_file:
-            content = await file.read()
-            await out_file.write(content)
-
-        # Background task: start only the transcription pipeline (no polling)
         background_tasks.add_task(
             analysis_service.start_transcription_pipeline,
             analysis_id,
-            source_path,
-            prompt,
+            content,
+            file.filename or "uploaded_audio",
+            blob_name,
         )
-
-        # Persist the correct source_file_path after successful save
-        # Reuse update_paths_and_status to just commit the source path via direct model change if available
-        # As repository lacks a dedicated method, do minimal update
-        rec = analysis_repo.get_by_id(analysis_id)
-        if rec:
-            rec.source_file_path = source_path
-            analysis_repo.db.commit()
-
         return {"analysis_id": analysis_id}
     except Exception as e:
-        # Mark as failed on any error during save
         analysis_repo.update_status(analysis_id, models.AnalysisStatus.FAILED)
-        raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error starting transcription: {str(e)}")
 
 
 @router.post("/rerun/{analysis_id}")
@@ -255,25 +256,13 @@ async def get_original_audio(
     if analysis.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    source_path = analysis.source_file_path
-    if not source_path or not os.path.exists(source_path):
-        raise HTTPException(status_code=404, detail="Source audio file not found")
+    blob_name = getattr(analysis, "source_blob_name", None)
+    if not blob_name:
+        raise HTTPException(status_code=404, detail="No source blob available")
 
-    # Guess media type from extension; default to audio/mpeg
-    ext = os.path.splitext(source_path)[1].lower()
-    media_map = {
-        ".mp3": "audio/mpeg",
-        ".wav": "audio/wav",
-        ".m4a": "audio/mp4",
-        ".aac": "audio/aac",
-        ".ogg": "audio/ogg",
-        ".flac": "audio/flac",
-        ".webm": "audio/webm",
-        ".opus": "audio/opus",
-    }
-    media_type = media_map.get(ext, "audio/mpeg")
-
-    return FileResponse(source_path, media_type=media_type, filename=os.path.basename(source_path))
+    transcriber = get_transcriber()
+    sas_url = transcriber.get_blob_sas_url(blob_name)
+    return {"url": sas_url}
 
 
 @router.get("/list")
@@ -427,5 +416,5 @@ async def rename_analysis(
         id=updated.id,
         status=updated.status,
         created_at=updated.created_at,
-        filename=os.path.basename(updated.source_file_path) if updated.source_file_path else "",
+        filename=updated.filename,
     )

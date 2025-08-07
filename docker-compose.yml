@@ -34,9 +34,6 @@ services:
     env_file:
       # Injecte les variables d'environnement depuis le fichier .env
       - .env
-    volumes:
-        # Monte le dossier 'uploads' local dans le conteneur pour la persistance des fichiers
-      - ./uploads:/app/uploads
     depends_on:
       # S'assure que le service 'db' est démarré avant le service 'app'.
       - db

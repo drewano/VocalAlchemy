@@ -11,7 +11,7 @@ from azure.storage.blob import (
     BlobSasPermissions,
     generate_blob_sas,
 )
-from azure.core.exceptions import ResourceExistsError
+from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 
 
 class AzureSpeechClient:
@@ -48,18 +48,27 @@ class AzureSpeechClient:
 
         self._speech_base_url = f"https://{self.region}.api.cognitive.microsoft.com/speechtotext/v3.1"
 
-    def _upload_audio_to_blob(self, file_path: str, sas_ttl_hours: int = 24) -> str:
-        if not file_path or not isinstance(file_path, str):
-            raise ValueError("Invalid file_path provided")
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Audio file not found: {file_path}")
+    def delete_blob(self, blob_name: str) -> None:
+        if not blob_name or not isinstance(blob_name, str):
+            raise ValueError("Invalid blob_name provided")
+        blob_client = self._container_client.get_blob_client(blob_name)
+        try:
+            blob_client.delete_blob()
+        except ResourceNotFoundError:
+            logging.warning(f"Blob not found for deletion: {blob_name}")
+        except Exception as e:
+            # Log and re-raise unexpected errors to avoid masking issues
+            logging.error(f"Unexpected error deleting blob '{blob_name}': {e}")
+            raise
 
-        file_name = os.path.basename(file_path)
-        blob_name = f"uploads/{uuid.uuid4()}-{file_name}"
+    def _upload_audio_to_blob(self, file_content: bytes, blob_name: str, sas_ttl_hours: int = 24) -> str:
+        if not isinstance(file_content, (bytes, bytearray)) or len(file_content) == 0:
+            raise ValueError("Invalid file_content provided")
+        if not blob_name or not isinstance(blob_name, str):
+            raise ValueError("Invalid blob_name provided")
 
         blob_client = self._container_client.get_blob_client(blob_name)
-        with open(file_path, "rb") as f:
-            blob_client.upload_blob(f, overwrite=True)
+        blob_client.upload_blob(file_content, overwrite=True)
 
         # Build SAS with read permission
         account_name = self._blob_service.account_name
@@ -74,11 +83,33 @@ class AzureSpeechClient:
         sas_url = f"{blob_client.url}?{sas_token}"
         return sas_url
 
-    def submit_batch_transcription(self, file_path: str) -> str:
+    def get_blob_sas_url(self, blob_name: str, ttl_hours: int = 1) -> str:
+        if not blob_name or not isinstance(blob_name, str):
+            raise ValueError("Invalid blob_name provided")
+        blob_client = self._container_client.get_blob_client(blob_name)
+        account_name = self._blob_service.account_name
+        sas_token = generate_blob_sas(
+            account_name=account_name,
+            container_name=self.storage_container_name,
+            blob_name=blob_name,
+            account_key=self._blob_service.credential.account_key,  # type: ignore[attr-defined]
+            permission=BlobSasPermissions(read=True),
+            expiry=datetime.now(timezone.utc) + timedelta(hours=ttl_hours),
+        )
+        return f"{blob_client.url}?{sas_token}"
+
+    def submit_batch_transcription(self, file_content: bytes, original_filename: str, blob_name: str) -> str:
         """
         Soumet un job de transcription par lot, optimisé pour la vitesse avec le français comme langue par défaut.
         """
-        audio_sas_url = self._upload_audio_to_blob(file_path)
+        if not isinstance(file_content, (bytes, bytearray)) or len(file_content) == 0:
+            raise ValueError("Invalid file_content provided")
+        if not original_filename or not isinstance(original_filename, str):
+            raise ValueError("Invalid original_filename provided")
+        if not blob_name or not isinstance(blob_name, str):
+            raise ValueError("Invalid blob_name provided")
+
+        audio_sas_url = self._upload_audio_to_blob(file_content, blob_name)
 
         logging.info("Submitting transcription with 'fr-FR' locale for maximum speed.")
 
