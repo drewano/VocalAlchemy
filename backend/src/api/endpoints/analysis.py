@@ -1,8 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, BackgroundTasks, Form, Body
-from fastapi.responses import FileResponse, PlainTextResponse
-import os
+from fastapi.responses import PlainTextResponse
 import uuid
-import aiofiles
 from sqlalchemy.orm import Session, joinedload
 from fastapi.responses import JSONResponse
 
@@ -14,6 +12,7 @@ from src.infrastructure.repositories.analysis_repository import AnalysisReposito
 from src.services.analysis_service import AnalysisService, AnalysisNotFoundException
 from src.services.external_apis.azure_speech_client import AzureSpeechClient
 from src.services.external_apis.litellm_ai_processor import LiteLLMAIProcessor
+from src.services.blob_storage_service import BlobStorageService
 from src.config import settings
 
 router = APIRouter()
@@ -25,12 +24,18 @@ def get_analysis_repository(db: Session = Depends(get_db)) -> AnalysisRepository
     return AnalysisRepository(db)
 
 @lru_cache()
-def get_transcriber() -> AzureSpeechClient:
+def get_blob_storage_service() -> BlobStorageService:
+    return BlobStorageService(
+        storage_connection_string=settings.AZURE_STORAGE_CONNECTION_STRING,
+        storage_container_name=settings.AZURE_STORAGE_CONTAINER_NAME,
+    )
+
+@lru_cache()
+def get_transcriber(blob_storage_service: BlobStorageService = Depends(get_blob_storage_service)) -> AzureSpeechClient:
     return AzureSpeechClient(
         api_key=settings.AZURE_SPEECH_KEY,
         region=settings.AZURE_SPEECH_REGION,
-        storage_connection_string=settings.AZURE_STORAGE_CONNECTION_STRING,
-        storage_container_name=settings.AZURE_STORAGE_CONTAINER_NAME,
+        blob_storage_service=blob_storage_service,
     )
 
 
@@ -42,11 +47,13 @@ def get_analysis_service(
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     transcriber: AzureSpeechClient = Depends(get_transcriber),
     ai_analyzer: LiteLLMAIProcessor = Depends(get_ai_analyzer),
+    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ) -> AnalysisService:
     return AnalysisService(
         analysis_repo,
         transcriber=transcriber,
         ai_analyzer=ai_analyzer,
+        blob_storage_service=blob_storage_service,
     )
 
 @router.get("/status/{analysis_id}", response_model=schemas.AnalysisStatusResponse)
@@ -55,6 +62,7 @@ async def get_analysis_status(
     current_user: models.User = Depends(get_current_user),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     analysis_service: AnalysisService = Depends(get_analysis_service),
+    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ):
     analysis = analysis_repo.get_by_id(analysis_id)
     if not analysis:
@@ -63,8 +71,7 @@ async def get_analysis_status(
         raise HTTPException(status_code=403, detail="Access denied")
 
     if analysis.status == models.AnalysisStatus.TRANSCRIPTION_IN_PROGRESS:
-        base_output_dir = os.path.join("uploads", analysis_id)
-        analysis_service.check_transcription_and_run_analysis(analysis_id, base_output_dir)
+        await analysis_service.check_transcription_and_run_analysis(analysis_id)
         analysis = analysis_repo.get_by_id(analysis_id)
 
     return schemas.AnalysisStatusResponse(id=analysis.id, status=analysis.status)
@@ -115,9 +122,9 @@ async def rerun_analysis(
     background_tasks: BackgroundTasks,
     prompt: str = Form(...),
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     analysis_service: AnalysisService = Depends(get_analysis_service),
+    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ):
     # 1. Verify analysis exists and belongs to user
     analysis = analysis_repo.get_by_id(analysis_id)
@@ -126,21 +133,15 @@ async def rerun_analysis(
     if analysis.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # 2. Get transcript path
-    transcript_path = analysis.transcript_path
-    if not transcript_path or not os.path.exists(transcript_path):
+    # 2. Ensure transcript blob exists
+    if not analysis.transcript_blob_name:
         raise HTTPException(status_code=404, detail="Transcript not available for rerun")
 
-    # 3. Read transcript content asynchronously
+    # 3. Read transcript content from blob storage
     try:
-        async with aiofiles.open(transcript_path, "r", encoding="utf-8") as f:
-            transcript = await f.read()
+        transcript = await blob_storage_service.download_blob_as_text(analysis.transcript_blob_name)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read transcript: {str(e)}")
-
-    # Prepare output dir
-    task_dir = os.path.dirname(transcript_path) or os.path.join("uploads", analysis_id)
-    os.makedirs(task_dir, exist_ok=True)
+        raise HTTPException(status_code=500, detail=f"Failed to read transcript from storage: {str(e)}")
 
     # Update status to ANALYSIS_PENDING before launching background task
     analysis_repo.update_status(analysis_id, models.AnalysisStatus.ANALYSIS_PENDING)
@@ -149,7 +150,6 @@ async def rerun_analysis(
     background_tasks.add_task(
         analysis_service.run_ai_analysis_pipeline,
         analysis_id=analysis_id,
-        base_output_dir=task_dir,
     )
 
     # 5. Return success
@@ -163,7 +163,7 @@ async def delete_analysis(
     analysis_service: AnalysisService = Depends(get_analysis_service),
 ):
     try:
-        analysis_service.delete_analysis(analysis_id=analysis_id, user_id=current_user.id)
+        await analysis_service.delete_analysis(analysis_id=analysis_id, user_id=current_user.id)
     except AnalysisNotFoundException:
         raise HTTPException(status_code=404, detail="Analysis not found")
     except PermissionError:
@@ -181,6 +181,7 @@ async def get_result(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ):
     analysis = analysis_repo.get_by_id(analysis_id)
     if not analysis:
@@ -189,10 +190,15 @@ async def get_result(
         raise HTTPException(status_code=403, detail="Access denied")
     if analysis.status != models.AnalysisStatus.COMPLETED:
         raise HTTPException(status_code=422, detail="Task not completed yet")
-    if not analysis.result_path or not os.path.exists(analysis.result_path):
-        raise HTTPException(status_code=404, detail="Result file not found")
+    if not getattr(analysis, "result_blob_name", None):
+        raise HTTPException(status_code=404, detail="Result not found")
 
-    return FileResponse(analysis.result_path, media_type='text/plain', filename="report.txt")
+    try:
+        content = await blob_storage_service.download_blob_as_text(analysis.result_blob_name)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Failed to read result from storage")
+
+    return PlainTextResponse(content)
 
 
 @router.get("/result/version/{version_id}")
@@ -201,6 +207,7 @@ async def get_version_result(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ):
     version = analysis_repo.get_version_by_id(version_id)
     if not version:
@@ -211,14 +218,13 @@ async def get_version_result(
         raise HTTPException(status_code=404, detail="Parent analysis not found")
     if analysis.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
-    if not version.result_path or not os.path.exists(version.result_path):
-        raise HTTPException(status_code=404, detail="Version result file not found")
+    if not getattr(version, "result_blob_name", None):
+        raise HTTPException(status_code=404, detail="Version result not found")
 
     try:
-        with open(version.result_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read version result: {str(e)}")
+        content = await blob_storage_service.download_blob_as_text(version.result_blob_name)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to read version result from storage")
 
     return PlainTextResponse(content)
 
@@ -229,6 +235,7 @@ async def get_transcript(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ):
     analysis = analysis_repo.get_by_id(analysis_id)
     if not analysis:
@@ -237,18 +244,23 @@ async def get_transcript(
         raise HTTPException(status_code=403, detail="Access denied")
     if analysis.status != models.AnalysisStatus.COMPLETED:
         raise HTTPException(status_code=422, detail="Task not completed yet")
-    if not analysis.transcript_path or not os.path.exists(analysis.transcript_path):
-        raise HTTPException(status_code=404, detail="Transcript file not found")
+    if not getattr(analysis, "transcript_blob_name", None):
+        raise HTTPException(status_code=404, detail="Transcript not found")
 
-    return FileResponse(analysis.transcript_path, media_type='text/plain', filename="transcription.txt")
+    try:
+        content = await blob_storage_service.download_blob_as_text(analysis.transcript_blob_name)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Failed to read transcript from storage")
+
+    return PlainTextResponse(content)
 
 
 @router.get("/audio/{analysis_id}")
 async def get_original_audio(
     analysis_id: str,
     current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ):
     analysis = analysis_repo.get_by_id(analysis_id)
     if not analysis:
@@ -260,8 +272,7 @@ async def get_original_audio(
     if not blob_name:
         raise HTTPException(status_code=404, detail="No source blob available")
 
-    transcriber = get_transcriber()
-    sas_url = transcriber.get_blob_sas_url(blob_name)
+    sas_url = await blob_storage_service.get_blob_sas_url(blob_name)
     return {"url": sas_url}
 
 
@@ -272,6 +283,7 @@ async def list_analyses(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ) -> schemas.AnalysisListResponse:
     items = analysis_repo.list_by_user(current_user.id, skip=skip, limit=limit)
     total = analysis_repo.count_by_user(current_user.id)
@@ -281,19 +293,19 @@ async def list_analyses(
         transcript_snippet: str | None = None
         analysis_snippet: str | None = None
 
-        # Read first 200 chars of transcript if available
+        # Read first 200 chars of transcript if available from blob
         try:
-            if a.transcript_path and os.path.exists(a.transcript_path):
-                with open(a.transcript_path, "r", encoding="utf-8") as f:
-                    transcript_snippet = f.read(200)
+            if getattr(a, "transcript_blob_name", None):
+                content = await blob_storage_service.download_blob_as_text(a.transcript_blob_name)
+                transcript_snippet = content[:200]
         except Exception:
             transcript_snippet = None
 
-        # Read first 200 chars of analysis result if available
+        # Read first 200 chars of analysis result if available from blob
         try:
-            if a.result_path and os.path.exists(a.result_path):
-                with open(a.result_path, "r", encoding="utf-8") as f:
-                    analysis_snippet = f.read(200)
+            if getattr(a, "result_blob_name", None):
+                content = await blob_storage_service.download_blob_as_text(a.result_blob_name)
+                analysis_snippet = content[:200]
         except Exception:
             analysis_snippet = None
 
@@ -322,6 +334,7 @@ async def get_analysis_detail(
     db: Session = Depends(get_db),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     analysis_service: AnalysisService = Depends(get_analysis_service),
+    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ) -> schemas.AnalysisDetail:
     a = analysis_repo.get_detailed_by_id(analysis_id)
     if not a:
@@ -331,9 +344,8 @@ async def get_analysis_detail(
 
     # Backend polling step for transcription completion
     if a.status == models.AnalysisStatus.TRANSCRIPTION_IN_PROGRESS:
-        base_output_dir = os.path.join("uploads", analysis_id)
         # This call may update status and enqueue analysis
-        analysis_service.check_transcription_and_run_analysis(analysis_id, base_output_dir)
+        await analysis_service.check_transcription_and_run_analysis(analysis_id)
         # Reload fresh state after potential update
         a = analysis_repo.get_detailed_by_id(analysis_id)
 
@@ -342,10 +354,9 @@ async def get_analysis_detail(
 
     # Read transcript content
     transcript_content = ""
-    if a.transcript_path and os.path.exists(a.transcript_path):
+    if getattr(a, "transcript_blob_name", None):
         try:
-            with open(a.transcript_path, "r", encoding="utf-8") as f:
-                transcript_content = f.read()
+            transcript_content = blob_storage_service.download_blob_as_text(a.transcript_blob_name)
         except Exception:
             transcript_content = ""
 
@@ -355,10 +366,9 @@ async def get_analysis_detail(
     action_plan = None
     if versions_sorted:
         latest_version = versions_sorted[0]
-        if latest_version.result_path and os.path.exists(latest_version.result_path):
+        if getattr(latest_version, "result_blob_name", None):
             try:
-                with open(latest_version.result_path, "r", encoding="utf-8") as f:
-                    latest_analysis_content = f.read()
+                latest_analysis_content = blob_storage_service.download_blob_as_text(latest_version.result_blob_name)
             except Exception:
                 latest_analysis_content = ""
         people_involved = latest_version.people_involved

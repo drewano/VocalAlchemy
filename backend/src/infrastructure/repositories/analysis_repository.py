@@ -66,16 +66,16 @@ class AnalysisRepository(BaseRepository):
             .count()
         )
 
-    def update_paths_and_status(self, analysis_id: str, *, status: Optional[models.AnalysisStatus] = None, result_path: Optional[str] = None, transcript_path: Optional[str] = None) -> None:
+    def update_paths_and_status(self, analysis_id: str, *, status: Optional[models.AnalysisStatus] = None, result_blob_name: Optional[str] = None, transcript_blob_name: Optional[str] = None) -> None:
         analysis = self.get_by_id(analysis_id)
         if not analysis:
             return
         if status is not None:
             analysis.status = status
-        if result_path is not None:
-            analysis.result_path = result_path
-        if transcript_path is not None:
-            analysis.transcript_path = transcript_path
+        if result_blob_name is not None:
+            analysis.result_blob_name = result_blob_name
+        if transcript_blob_name is not None:
+            analysis.transcript_blob_name = transcript_blob_name
         self.db.commit()
 
     def update_status(self, analysis_id: str, status: models.AnalysisStatus) -> None:
@@ -88,11 +88,11 @@ class AnalysisRepository(BaseRepository):
         analysis.progress = max(0, min(100, int(progress)))
         self.db.commit()
 
-    def add_version(self, analysis_id: str, prompt_used: str, result_path: str, people_involved: Optional[str] = None, structured_plan: Optional[dict] = None) -> models.AnalysisVersion:
+    def add_version(self, analysis_id: str, prompt_used: str, result_blob_name: str, people_involved: Optional[str] = None, structured_plan: Optional[dict] = None) -> models.AnalysisVersion:
         version = models.AnalysisVersion(
             analysis_id=analysis_id,
             prompt_used=prompt_used,
-            result_path=result_path,
+            result_blob_name=result_blob_name,
             people_involved=people_involved,
             structured_plan=structured_plan,
         )

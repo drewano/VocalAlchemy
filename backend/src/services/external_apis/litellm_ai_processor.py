@@ -8,7 +8,7 @@ class LiteLLMAIProcessor:
     def __init__(self, model_name: str) -> None:
         self.model_name = model_name
 
-    def execute_prompt(self, system_prompt: str, user_content: str) -> str:
+    async def execute_prompt(self, system_prompt: str, user_content: str) -> str:
         """
         Execute a generic prompt using LiteLLM with Azure AI backend.
         system_prompt: content for the system role
@@ -24,7 +24,7 @@ class LiteLLMAIProcessor:
             {"role": "user", "content": user_content},
         ]
 
-        response = litellm.completion(
+        response = await litellm.acompletion(
             model=f"azure_ai/{self.model_name}",
             messages=messages,
         )
