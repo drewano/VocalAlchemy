@@ -11,9 +11,9 @@ from src.infrastructure.database import get_db
 from src.auth import get_current_user
 from src.infrastructure.repositories.analysis_repository import AnalysisRepository
 from src.services.analysis_service import AnalysisService, AnalysisNotFoundException
-from src.services.audio_splitter import split_audio
 from src.services.external_apis.azure_speech_client import AzureSpeechClient
 from src.services.external_apis.litellm_ai_processor import LiteLLMAIProcessor
+from src.services.audio_processor import normalize_audio_for_azure
 from src.config import settings
 
 router = APIRouter()
@@ -23,8 +23,16 @@ def get_analysis_repository(db: Session = Depends(get_db)) -> AnalysisRepository
 
 # External clients dependencies
 
+from functools import lru_cache
+
+@lru_cache()
 def get_transcriber() -> AzureSpeechClient:
-    return AzureSpeechClient(api_key=settings.AZURE_SPEECH_KEY, region=settings.AZURE_SPEECH_REGION)
+    return AzureSpeechClient(
+        api_key=settings.AZURE_SPEECH_KEY,
+        region=settings.AZURE_SPEECH_REGION,
+        storage_connection_string=settings.AZURE_STORAGE_CONNECTION_STRING,
+        storage_container_name=settings.AZURE_STORAGE_CONTAINER_NAME,
+    )
 
 
 def get_ai_analyzer() -> LiteLLMAIProcessor:
@@ -39,7 +47,6 @@ def get_analysis_service(
 ) -> AnalysisService:
     return AnalysisService(
         analysis_repo,
-        audio_splitter=split_audio,
         transcriber=transcriber,
         ai_analyzer=ai_analyzer,
     )
@@ -79,11 +86,15 @@ async def process_audio(
             content = await file.read()
             await out_file.write(content)
 
-        # Background task to run full pipeline
+        # Normalize audio before sending to Azure
+        normalized_audio_path = os.path.splitext(source_path)[0] + ".wav"
+        normalize_audio_for_azure(input_path=source_path, output_path=normalized_audio_path)
+
+        # Background task to run full pipeline using normalized audio
         background_tasks.add_task(
             analysis_service.run_full_pipeline,
             analysis_id,
-            source_path,
+            normalized_audio_path,
             base_output_dir,
             prompt,
         )

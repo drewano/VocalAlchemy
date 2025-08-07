@@ -16,3 +16,4 @@ aiofiles
 langextract
 azure-cognitiveservices-speech
 litellm
+azure-storage-blob

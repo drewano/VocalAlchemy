@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import litellm
 
 
@@ -23,11 +24,8 @@ class LiteLLMAIProcessor:
             {"role": "user", "content": user_content},
         ]
 
-        try:
-            response = litellm.completion(
-                model=f"azure_ai/{self.model_name}",
-                messages=messages,
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            raise Exception(f"Failed to execute prompt with LiteLLM/Azure AI: {str(e)}")
+        response = litellm.completion(
+            model=f"azure_ai/{self.model_name}",
+            messages=messages,
+        )
+        return response.choices[0].message.content

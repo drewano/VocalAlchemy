@@ -8,9 +8,24 @@ from fastapi.staticfiles import StaticFiles
 from src.services.prompts import PREDEFINED_PROMPTS
 from src.api.endpoints import users, analysis
 from src.api.endpoints import user_prompts as user_prompts
+import logging
+import litellm
+from src.config import settings
 
 from src.infrastructure.database import engine
 from src.infrastructure import sql_models as models
+
+# Configuration centralisée du logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - [%(name)s] - %(message)s",
+    force=True,
+)
+
+# Active le mode verbeux de LiteLLM si activé dans la configuration
+if settings.LITELLM_DEBUG:
+    litellm.set_verbose = True
+    logging.info("LiteLLM verbose mode is enabled.")
 
 models.Base.metadata.create_all(bind=engine)
 

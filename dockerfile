@@ -30,8 +30,17 @@ ENV PYTHONUNBUFFERED 1
 
 # Installation des dépendances système.
 # ffmpeg est requis par pydub pour traiter les fichiers audio.
+# Packages additionnels requis par le SDK Azure Speech (SSL, ALSA, GStreamer pour I/O audio).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        ca-certificates \
+        libasound2 \
+        libssl3 \
+        gstreamer1.0-alsa \
+        gstreamer1.0-libav \
+        gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

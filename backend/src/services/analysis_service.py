@@ -1,8 +1,8 @@
 import os
 import shutil
-import concurrent.futures
 import json
 import logging
+import time
 from typing import Optional, Protocol, List
 
 from langextract.resolver import ResolverParsingError
@@ -18,13 +18,17 @@ class AnalysisNotFoundException(Exception):
     pass
 
 
-class AudioSplitter(Protocol):
-    def __call__(self, source_path: str, output_dir: str) -> List[str]:
+class Transcriber(Protocol):
+    def submit_batch_transcription(self, file_path: str) -> str:
         ...
 
+    def check_transcription_status(self, status_url: str) -> dict:
+        ...
 
-class Transcriber(Protocol):
-    def transcribe_audio_chunk(self, audio_chunk_path: str) -> str:
+    def get_transcription_files(self, status_url: str) -> dict:
+        ...
+
+    def get_transcription_result(self, files_response: dict) -> str:
         ...
 
 
@@ -38,19 +42,12 @@ class AnalysisService:
         self,
         analysis_repo: AnalysisRepository,
         *,
-        audio_splitter: AudioSplitter,
         transcriber: Transcriber,
         ai_analyzer: LiteLLMAIProcessor,
     ) -> None:
         self.analysis_repo = analysis_repo
-        self.audio_splitter = audio_splitter
         self.transcriber = transcriber
         self.ai_analyzer = ai_analyzer
-
-    def _prepare_segments_dir(self, base_output_dir: str) -> str:
-        segments_dir = os.path.join(base_output_dir, "segments")
-        os.makedirs(segments_dir, exist_ok=True)
-        return segments_dir
 
     def _write_text_file(self, path: str, content: str) -> None:
         with open(path, "w", encoding="utf-8") as f:
@@ -112,43 +109,68 @@ class AnalysisService:
             raise FileNotFoundError(f"Source file not found: {source_path}")
 
         try:
-            segments_dir = self._prepare_segments_dir(base_output_dir)
-
-            # Update status and split audio
+            # 1) Update status to PROCESSING
             self.analysis_repo.update_status(analysis_id, AnalysisStatus.PROCESSING)
-            segment_paths = self.audio_splitter(source_path, segments_dir)
 
-            # Transcribe in parallel
-            total_chunks = len(segment_paths)
-            transcriptions: List[Optional[str]] = [None] * total_chunks
+            # 2) Submit batch transcription job
+            status_url = self.transcriber.submit_batch_transcription(source_path)
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future_to_index = {
-                    executor.submit(self.transcriber.transcribe_audio_chunk, segment_paths[idx]): idx
-                    for idx in range(total_chunks)
-                }
+            # 3) Persist job tracking URL on Analysis
+            analysis = self.analysis_repo.get_by_id(analysis_id)
+            if analysis:
+                analysis.transcription_job_url = status_url
+                self.analysis_repo.db.commit()
 
-                completed = 0
-                for future in concurrent.futures.as_completed(future_to_index):
-                    idx = future_to_index[future]
+            # 4) Polling loop for job status
+            start_time = time.time()
+            POLLING_TIMEOUT_SECONDS = 3600  # 1 hour
+            while True:
+                # Timeout guard
+                if time.time() - start_time > POLLING_TIMEOUT_SECONDS:
+                    raise TimeoutError("Transcription polling timed out after 1 hour.")
+
+                status_resp = self.transcriber.check_transcription_status(status_url)
+                status = status_resp.get("status") or status_resp.get("statusCode")
+                logging.info(f"Transcription status for {analysis_id}: {status}")
+
+                if str(status).lower() in {"succeeded"}:
+                    break
+                if str(status).lower() == "failed":
+                    # Log full Azure response for debugging/observability
+                    logging.error(f"Azure transcription failed. Full response: {status_resp}")
+                    # Prefer specific errors if present, otherwise include full JSON payload
+                    errors = status_resp.get("errors") or status_resp.get("properties", {}).get("errors")
+                    if not errors:
+                        try:
+                            errors = json.dumps(status_resp, ensure_ascii=False)
+                        except Exception:
+                            errors = str(status_resp)
+                    raise RuntimeError(f"Transcription failed: {errors}")
+
+                # Optionally update progress if provided by service
+                progress = status_resp.get("properties", {}).get("progress")
+                if isinstance(progress, (int, float)):
                     try:
-                        transcriptions[idx] = future.result()
-                    except Exception as e:
-                        transcriptions[idx] = ""
-                        # propagate error to be caught by outer try/except
-                        raise e
-                    finally:
-                        completed += 1
-                        self.analysis_repo.update_progress(analysis_id, int((completed / max(total_chunks, 1)) * 100))
+                        self.analysis_repo.update_progress(analysis_id, int(progress))
+                    except Exception:
+                        pass
 
-            full_text = "\n".join(t for t in transcriptions if t)
+                time.sleep(30)
+
+            # 7) Retrieve files list and fetch final transcription text
+            logging.info("Fetching transcription files list from Azure Speech...")
+            files_response = self.transcriber.get_transcription_files(status_url)
+            full_text = self.transcriber.get_transcription_result(files_response)
+
+            # 8) Save transcript to file
+            os.makedirs(base_output_dir, exist_ok=True)
             transcript_path = os.path.join(base_output_dir, "transcription.txt")
             self._write_text_file(transcript_path, full_text)
 
-            # Exécuter le pipeline factorisé
+            # 9) Run downstream analysis pipeline
             final_report_content = self._execute_analysis_pipeline(full_text, user_prompt)
 
-            # Sauvegarde et Versionnement
+            # 10) Save report and create version entry
             report_path = os.path.join(base_output_dir, "report.txt")
             self._write_text_file(report_path, final_report_content)
 
@@ -161,23 +183,23 @@ class AnalysisService:
             )
 
             # Finish
-            self.analysis_repo.update_paths_and_status(analysis_id, status=AnalysisStatus.COMPLETED, transcript_path=transcript_path)
+            self.analysis_repo.update_paths_and_status(
+                analysis_id,
+                status=AnalysisStatus.COMPLETED,
+                transcript_path=transcript_path,
+            )
             self.analysis_repo.update_progress(analysis_id, 100)
-
-            # Cleanup
-            if os.path.exists(segments_dir):
-                shutil.rmtree(segments_dir)
 
             return report_path
         except Exception as e:
-            import logging
-            logging.error(f"Pipeline failed for analysis {analysis_id}: {e}")
+            error_details = f"Pipeline failed unexpectedly. Error type: {type(e).__name__}. Details: {e}"
+            logging.error(error_details)
             # Mark FAILED and persist error details
             self.analysis_repo.update_paths_and_status(analysis_id, status=AnalysisStatus.FAILED)
             analysis = self.analysis_repo.get_by_id(analysis_id)
             if analysis:
                 analysis.status = AnalysisStatus.FAILED
-                analysis.error_message = str(e)
+                analysis.error_message = error_details
                 self.analysis_repo.db.commit()
             raise
 
