@@ -270,9 +270,13 @@ const AnalysisDetailPage: React.FC = () => {
                     {flows.length === 0 ? (
                       <SelectItem disabled value="__none__">Aucun flux</SelectItem>
                     ) : (
-                      flows.map((flow) => (
-                        <SelectItem key={flow.id} value={flow.id}>{flow.name}</SelectItem>
-                      ))
+                      flows.map((flow) => {
+                        const isPredefined = flow.id.startsWith('predefined_')
+                        const label = isPredefined ? `Prédéfini · ${flow.name}` : flow.name
+                        return (
+                          <SelectItem key={flow.id} value={flow.id}>{label}</SelectItem>
+                        )
+                      })
                     )}
                   </SelectGroup>
                 </SelectContent>

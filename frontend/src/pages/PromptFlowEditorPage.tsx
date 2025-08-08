@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -148,6 +148,7 @@ export default function PromptFlowEditorPage() {
                       index={index}
                       name={step.name}
                       content={step.content}
+                      allStepKeys={steps.map((s) => s.name).filter(Boolean)}
                       disabled={isSaving || isLoading}
                       onChangeName={(val) => setSteps((prev) => prev.map((s) => (s.id === step.id ? { ...s, name: val } : s)))}
                       onChangeContent={(val) => setSteps((prev) => prev.map((s) => (s.id === step.id ? { ...s, content: val } : s)))}
@@ -179,19 +180,54 @@ type PromptStepCardProps = {
   index: number
   name: string
   content: string
+  allStepKeys: string[]
   disabled?: boolean
   onChangeName: (value: string) => void
   onChangeContent: (value: string) => void
   onRemove: () => void
 }
 
-function PromptStepCard({ id, index, name, content, disabled, onChangeName, onChangeContent, onRemove }: PromptStepCardProps) {
+function PromptStepCard({ id, index, name, content, allStepKeys, disabled, onChangeName, onChangeContent, onRemove }: PromptStepCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging, setActivatorNodeRef } = useSortable({ id })
 
   const style: React.CSSProperties = {
     transform: transform ? `translate3d(${Math.round(transform.x)}px, ${Math.round(transform.y)}px, 0)` : undefined,
     transition,
     opacity: isDragging ? 0.85 : 1,
+  }
+
+  // Manage caret position for inserting placeholders
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  const insertAtCaret = (text: string) => {
+    const value = content || ''
+    const token = `{${text}}`
+    const el = textareaRef.current as HTMLTextAreaElement | null
+    if (el && typeof el.selectionStart === 'number') {
+      const start = el.selectionStart as number
+      const end = el.selectionEnd as number
+      const newVal = value.slice(0, start) + token + value.slice(end)
+      onChangeContent(newVal)
+      // move caret after token
+      setTimeout(() => {
+        try {
+          el.focus()
+          el.selectionStart = el.selectionEnd = start + token.length
+        } catch {}
+      }, 0)
+    } else {
+      onChangeContent((value || '') + token)
+    }
+  }
+
+  const onDropPlaceholder: React.DragEventHandler<HTMLTextAreaElement> = (e) => {
+    e.preventDefault()
+    const data = e.dataTransfer.getData('text/plain')
+    if (data) insertAtCaret(data)
+  }
+
+  const onDragOver: React.DragEventHandler<HTMLTextAreaElement> = (e) => {
+    e.preventDefault()
   }
 
   return (
@@ -214,9 +250,22 @@ function PromptStepCard({ id, index, name, content, disabled, onChangeName, onCh
           <label className="text-xs font-medium">Nom de l'étape (clé de contexte)</label>
           <Input value={name} onChange={(e) => onChangeName(e.target.value)} disabled={disabled} placeholder="ex: intervenants, synthese, actions" />
         </div>
+        {/* Palette de placeholders */}
+        <PlaceholderPalette
+          otherKeys={(allStepKeys || []).filter((k) => k && k !== name)}
+          onInsert={insertAtCaret}
+        />
         <div className="space-y-1">
           <label className="text-xs font-medium">Contenu du prompt</label>
-          <Textarea value={content} onChange={(e) => onChangeContent(e.target.value)} disabled={disabled} placeholder="Contenu du prompt, avec placeholders {transcript} ou {intervenants}, etc." />
+          <Textarea
+            value={content}
+            onChange={(e) => onChangeContent(e.target.value)}
+            onDrop={onDropPlaceholder}
+            onDragOver={onDragOver}
+            ref={textareaRef}
+            disabled={disabled}
+            placeholder="Contenu du prompt, utilisez {transcript}, {analysis_id}, {flow_name} ou les clés d'étapes précédentes. Glissez-déposez des placeholders ci-dessus."
+          />
         </div>
         <div className="pt-1 flex justify-end">
           <Button type="button" variant="destructive" onClick={onRemove} disabled={disabled}>
@@ -224,6 +273,35 @@ function PromptStepCard({ id, index, name, content, disabled, onChangeName, onCh
           </Button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function PlaceholderPalette({ otherKeys, onInsert }: { otherKeys: string[]; onInsert: (token: string) => void }) {
+  const baseKeys = ['transcript', 'analysis_id', 'flow_name']
+  const keys = [...baseKeys, ...otherKeys]
+
+  const onDragStart: React.DragEventHandler<HTMLButtonElement> = (e) => {
+    const token = e.currentTarget.getAttribute('data-token') || ''
+    e.dataTransfer.setData('text/plain', token)
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2 text-xs">
+      {keys.map((k) => (
+        <button
+          key={k}
+          type="button"
+          className="px-2 py-1 rounded border bg-muted hover:bg-muted/70"
+          title={`Insérer {${k}}`}
+          draggable
+          data-token={k}
+          onDragStart={onDragStart}
+          onClick={() => onInsert(k)}
+        >
+          {`{${k}}`}
+        </button>
+      ))}
     </div>
   )
 }

@@ -230,13 +230,27 @@ class AnalysisService:
 
                 report_blob_name = f"{analysis_id}/versions/{str(uuid.uuid4())}/report.md"
                 await self.blob_storage_service.upload_blob(final_report_content, report_blob_name)
-                await self.analysis_repo.add_version(
+                version = await self.analysis_repo.add_version(
                     analysis_id=analysis_id,
                     prompt_used=legacy_name_key,
                     result_blob_name=report_blob_name,
                     people_involved=None,
                     structured_plan=None,
                 )
+                # Also store as a single step result for UI progressive display
+                from ..infrastructure.sql_models import AnalysisStepResult, AnalysisStepStatus
+                step_row = AnalysisStepResult(
+                    analysis_version_id=version.id,
+                    step_name=legacy_name_key,
+                    step_order=1,
+                    status=AnalysisStepStatus.COMPLETED,
+                    content=result_text,
+                )
+                self.analysis_repo.db.add(step_row)
+                try:
+                    await self.analysis_repo.db.commit()
+                except Exception:
+                    pass
                 await self.analysis_repo.update_paths_and_status(
                     analysis_id,
                     status=AnalysisStatus.COMPLETED,

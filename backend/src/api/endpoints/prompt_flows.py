@@ -65,12 +65,15 @@ async def list_prompt_flows(
         for f in flows
     ]
 
-    # Append virtual flows from predefined prompts (legacy)
+    # Append virtual flows from predefined prompts (legacy), avoiding duplicates with DB
     from src.services.prompts import PREDEFINED_PROMPTS
 
     virtual_flows: list[schemas.PromptFlow] = []
+    existing_ids = {str(f.id) for f in db_flows}
     for name, content in PREDEFINED_PROMPTS.items():
         virtual_id = f"predefined_{name.replace(' ', '_')}"
+        if virtual_id in existing_ids:
+            continue
         step = schemas.PromptStep(
             id=f"{virtual_id}_step_1",
             name="analyse",

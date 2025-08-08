@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body
+from pydantic import BaseModel
+from sqlalchemy import select
 from fastapi.responses import PlainTextResponse
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -130,7 +132,6 @@ async def initiate_upload(
         filename=body.filename,
         status=models.AnalysisStatus.PENDING,
         source_blob_name=blob_name,
-        prompt="",  # Will be set later in finalize-upload
     )
 
     analysis_id = analysis.id
@@ -163,9 +164,27 @@ async def finalize_upload(
     if analysis.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # 2. Update the prompt_flow_id field
+    # 2. Ensure predefined flow exists to satisfy FK, then update prompt_flow_id
     try:
-        analysis.prompt_flow_id = body.prompt_flow_id
+        flow_id = body.prompt_flow_id
+        if str(flow_id).startswith("predefined_"):
+            # Create a placeholder PromptFlow row if missing (to satisfy foreign key)
+            result = await analysis_repo.db.execute(
+                select(models.PromptFlow).where(models.PromptFlow.id == flow_id)
+            )
+            flow = result.scalar_one_or_none()
+            if not flow:
+                name = str(flow_id).removeprefix("predefined_").replace("_", " ")
+                flow = models.PromptFlow(
+                    id=flow_id,
+                    name=name,
+                    description="Prompt prédéfini (virtuel)",
+                    user_id=current_user.id,
+                )
+                analysis_repo.db.add(flow)
+                await analysis_repo.db.commit()
+
+        analysis.prompt_flow_id = flow_id
         await analysis_repo.db.commit()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error updating analysis: {str(e)}")
@@ -205,9 +224,25 @@ async def rerun_analysis(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read transcript from storage: {str(e)}")
 
-    # Update the prompt flow if provided
+    # Update the prompt flow if provided (ensure predefined row exists for FK)
     if getattr(body, "prompt_flow_id", None):
-        analysis.prompt_flow_id = body.prompt_flow_id
+        flow_id = body.prompt_flow_id
+        if str(flow_id).startswith("predefined_"):
+            result = await analysis_repo.db.execute(
+                select(models.PromptFlow).where(models.PromptFlow.id == flow_id)
+            )
+            flow = result.scalar_one_or_none()
+            if not flow:
+                name = str(flow_id).removeprefix("predefined_").replace("_", " ")
+                flow = models.PromptFlow(
+                    id=flow_id,
+                    name=name,
+                    description="Prompt prédéfini (virtuel)",
+                    user_id=current_user.id,
+                )
+                analysis_repo.db.add(flow)
+                await analysis_repo.db.commit()
+        analysis.prompt_flow_id = flow_id
         await analysis_repo.db.commit()
 
     # Update status to ANALYSIS_PENDING before enqueuing task
