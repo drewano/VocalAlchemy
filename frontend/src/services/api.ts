@@ -152,6 +152,39 @@ export async function renameAnalysis(analysisId: string, newName: string): Promi
   await api.patch(`/analysis/${analysisId}/rename`, { filename: newName })
 }
 
+/**
+ * Relance uniquement la transcription d'une analyse
+ * @param analysisId L'ID de l'analyse à retranscrire
+ */
+export async function relaunchTranscription(analysisId: string): Promise<void> {
+  await api.post(`/analysis/${analysisId}/retranscribe`)
+}
+
+/**
+ * Relance une seule étape de l'analyse IA
+ * @param stepResultId L'ID du résultat d'étape à relancer
+ * @param newPromptContent Le nouveau contenu du prompt (optionnel)
+ */
+export async function relaunchAnalysisStep(stepResultId: string, newPromptContent?: string): Promise<void> {
+  await api.post(`/analysis/step-result/${stepResultId}/rerun`, {
+    new_prompt_content: newPromptContent
+  })
+}
+
+/**
+ * Télécharge un document Word contenant la transcription ou l'assemblage des résultats
+ * @param analysisId L'ID de l'analyse
+ * @param type Le type de document à télécharger ('transcription' ou 'assembly')
+ * @returns Un Blob contenant le document Word
+ */
+export async function downloadWordDocument(analysisId: string, type: 'transcription' | 'assembly'): Promise<Blob> {
+  const response = await api.get(`/analysis/${analysisId}/download-word`, {
+    params: { type },
+    responseType: 'blob'
+  })
+  return response.data
+}
+
 // Récupère une URL SAS pour le fichier audio original
 export async function getAudioFileSasUrl(analysisId: string): Promise<string> {
   const res = await api.get(`/analysis/audio/${analysisId}`)

@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import * as api from '@/services/api'
-import type { AnalysisDetail, AnalysisVersion, ActionPlanItem } from '@/types'
+import type { AnalysisDetail, AnalysisVersion } from '@/types'
 
 export function useAnalysisDetail(analysisId?: string) {
   const [analysisData, setAnalysisData] = useState<AnalysisDetail | null>(null)
   // Removed currentAnalysis; content now comes from step results directly
   const [currentPeople, setCurrentPeople] = useState<string>('')
-  const [actionPlan, setActionPlan] = useState<ActionPlanItem[] | null>(null)
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [isRerunning, setIsRerunning] = useState<boolean>(false)
+  const [isSaving, setIsSaving] = useState<boolean>(false)
   const [error, setError] = useState<{ message: string; status: number } | null>(null)
   const [editedTranscript, setEditedTranscript] = useState<string>('')
   const [selectedFlowForRerun, setSelectedFlowForRerun] = useState<string>('')
@@ -23,7 +23,6 @@ export function useAnalysisDetail(analysisId?: string) {
       setAnalysisData(data)
       // latest_analysis is no longer primary; steps will be displayed progressively
       setCurrentPeople(data.people_involved || 'Non spécifié')
-      setActionPlan(data.action_plan || null)
       setEditedTranscript(data.transcript || '')
     } catch (e: any) {
       setError(e)
@@ -85,7 +84,6 @@ export function useAnalysisDetail(analysisId?: string) {
       const data = await api.getAnalysisDetail(analysisId)
       setAnalysisData(data)
       setCurrentPeople(data.people_involved || 'Non spécifié')
-      setActionPlan(data.action_plan || null)
     } catch (e: any) {
       setError(e)
       console.error('Failed to rerun analysis', e)
@@ -107,6 +105,7 @@ export function useAnalysisDetail(analysisId?: string) {
 
   const saveTranscript = useCallback(async () => {
     if (!analysisId) return
+    setIsSaving(true)
     setError(null)
     try {
       await api.updateTranscript(analysisId, editedTranscript)
@@ -116,6 +115,8 @@ export function useAnalysisDetail(analysisId?: string) {
     } catch (e: any) {
       setError(e)
       console.error('Failed to update transcript', e)
+    } finally {
+      setIsSaving(false)
     }
   }, [analysisId, editedTranscript])
 
@@ -124,10 +125,10 @@ export function useAnalysisDetail(analysisId?: string) {
     currentPeople,
     isLoading,
     isRerunning,
+    isSaving,
     error,
     rerunAnalysis,
     selectVersion,
-    actionPlan,
     editedTranscript,
     setEditedTranscript,
     saveTranscript,

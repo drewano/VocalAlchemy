@@ -19,3 +19,4 @@ pydub
 httpx
 arq[redis]
 asyncpg
+python-docx

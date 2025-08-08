@@ -7,6 +7,7 @@ from src.worker.tasks import (
     check_transcription_status_task,
     run_ai_analysis_task,
     delete_analysis_task,
+    rerun_ai_analysis_step_task,
 )
 from src.worker.redis import get_redis_settings
 from src.infrastructure.database import engine
@@ -30,6 +31,7 @@ class WorkerSettings:
         check_transcription_status_task,
         run_ai_analysis_task,
         delete_analysis_task,
+        rerun_ai_analysis_step_task,
     ]
     redis_settings = get_redis_settings()
     on_startup = on_startup

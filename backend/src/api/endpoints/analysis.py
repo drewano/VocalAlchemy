@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from pydantic import BaseModel
 from sqlalchemy import select
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 
 from arq.connections import ArqRedis
 from src.worker.redis import get_redis_pool
@@ -25,6 +26,9 @@ class TranscriptUpdate(BaseModel):
 
 class StepResultUpdate(BaseModel):
     content: str
+
+class RerunStepRequest(BaseModel):
+    new_prompt_content: Optional[str] = None
 
 
 # Dependency providers (grouped at top for clarity and to avoid NameError in Depends)
@@ -498,3 +502,82 @@ async def rename_analysis(
         created_at=updated.created_at,
         filename=updated.filename,
     )
+
+
+@router.post("/{analysis_id}/retranscribe")
+async def retranscribe_analysis(
+    analysis_id: str,
+    current_user: models.User = Depends(get_current_user),
+    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
+    arq_pool: ArqRedis = ARQ_POOL,
+):
+    # 1. Verify analysis exists and belongs to user
+    analysis = await analysis_repo.get_by_id(analysis_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    if analysis.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # 2. Update status to TRANSCRIPTION_PENDING before enqueuing task
+    await analysis_repo.update_status(analysis_id, models.AnalysisStatus.TRANSCRIPTION_PENDING)
+
+    # 3. Enqueue transcription task
+    await arq_pool.enqueue_job('start_transcription_task', analysis_id)
+
+    return {"message": "Retranscription started", "analysis_id": analysis_id}
+
+
+@router.post("/step-result/{step_result_id}/rerun")
+async def rerun_step_result(
+    step_result_id: str,
+    body: RerunStepRequest = Body(default=None),
+    current_user: models.User = Depends(get_current_user),
+    analysis_service: AnalysisService = Depends(get_analysis_service),
+    arq_pool: ArqRedis = ARQ_POOL,
+):
+    try:
+        # Validate step result ownership through analysis
+        step_result = await analysis_service.analysis_repo.get_step_result_by_id(step_result_id)
+        if not step_result:
+            raise HTTPException(status_code=404, detail="Step result not found")
+        
+        analysis = await analysis_service.analysis_repo.get_by_id(step_result.analysis_version.analysis_id)
+        if not analysis or analysis.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+            
+        # Enqueue rerun task
+        new_prompt_content = body.new_prompt_content if body else None
+        await arq_pool.enqueue_job('rerun_ai_analysis_step_task', step_result_id, new_prompt_content)
+        
+        return {"message": "Step rerun started", "step_result_id": step_result_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error starting step rerun: {str(e)}")
+
+
+@router.get("/{analysis_id}/download-word")
+async def download_word_document(
+    analysis_id: str,
+    current_user: models.User = Depends(get_current_user),
+    analysis_service: AnalysisService = Depends(get_analysis_service),
+):
+    try:
+        # Get analysis detail
+        analysis_detail = await analysis_service.get_analysis_detail_for_export(analysis_id, current_user.id)
+        
+        # Generate Word document
+        docx_buffer = await analysis_service.generate_word_document(analysis_detail)
+        
+        # Prepare response
+        filename = f"analyse_{analysis_id}.docx"
+        headers = {
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }
+        
+        return Response(content=docx_buffer.getvalue(), headers=headers, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    except AnalysisNotFoundException:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Access denied")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating Word document: {str(e)}")

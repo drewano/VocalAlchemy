@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from typing import Optional
 
 from src.infrastructure.sql_models import AnalysisStatus
 from src.worker.dependencies import get_analysis_service_provider
@@ -75,4 +76,13 @@ async def delete_analysis_task(ctx, analysis_id: str, user_id: int) -> None:
             await service.delete_analysis_data(analysis_id, user_id)
         except Exception as e:
             logging.error("Unexpected error while deleting analysis %s: %s", analysis_id, e)
+            raise
+
+
+async def rerun_ai_analysis_step_task(ctx, step_result_id: str, new_prompt_content: Optional[str] = None) -> None:
+    async with get_analysis_service_provider(ctx) as service:
+        try:
+            await service.rerun_ai_analysis_step(step_result_id, new_prompt_content)
+        except Exception:
+            # Error handling and status updates are managed inside the service; re-raise to let ARQ handle retries/logging
             raise
