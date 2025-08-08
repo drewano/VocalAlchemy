@@ -1,5 +1,3 @@
-import os
-import json
 import logging
 import litellm
 
@@ -24,8 +22,15 @@ class LiteLLMAIProcessor:
             {"role": "user", "content": user_content},
         ]
 
+        # Build full model name with provider prefix exactly once
+        sanitized_model_name = (self.model_name or "").strip()
+        full_model_name = (
+            sanitized_model_name if "/" in sanitized_model_name else f"azure_ai/{sanitized_model_name}"
+        )
+
+        logging.info("LiteLLM calling model='%s' via Azure AI", full_model_name)
         response = await litellm.acompletion(
-            model=f"azure_ai/{self.model_name}",
+            model=full_model_name,
             messages=messages,
         )
         return response.choices[0].message.content

@@ -13,7 +13,7 @@ pydantic-settings
 aiofiles
 langextract
 azure-cognitiveservices-speech
-litellm
+litellm[proxy]>=1.73.6  # Required for Azure AI Studio provider support (`azure_ai`); see LiteLLM docs/providers/azure_ai and v1.73.6+ release notes
 azure-storage-blob
 pydub
 httpx
