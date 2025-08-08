@@ -18,6 +18,12 @@ from src.services.blob_storage_service import BlobStorageService
 from src.config import settings
 
 router = APIRouter()
+class TranscriptUpdate(BaseModel):
+    content: str
+
+class StepResultUpdate(BaseModel):
+    content: str
+
 
 # Dependency providers (grouped at top for clarity and to avoid NameError in Depends)
 from functools import lru_cache
@@ -74,6 +80,40 @@ async def get_analysis_status(
 
     return schemas.AnalysisStatusResponse(id=analysis.id, status=analysis.status)
 
+
+@router.put("/{analysis_id}/transcript")
+async def update_transcript(
+    analysis_id: str,
+    body: TranscriptUpdate,
+    current_user: models.User = Depends(get_current_user),
+    analysis_service: AnalysisService = Depends(get_analysis_service),
+):
+    try:
+        await analysis_service.overwrite_transcript_content(analysis_id, current_user.id, body.content)
+    except AnalysisNotFoundException:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Access denied")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    return {"status": "ok"}
+
+
+@router.put("/step-result/{step_result_id}")
+async def update_step_result(
+    step_result_id: str,
+    body: StepResultUpdate,
+    current_user: models.User = Depends(get_current_user),
+    analysis_service: AnalysisService = Depends(get_analysis_service),
+):
+    try:
+        await analysis_service.update_step_result_content(step_result_id, current_user.id, body.content)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Access denied")
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Step result not found")
+    return {"status": "ok"}
+
 @router.post("/initiate-upload/", response_model=schemas.InitiateUploadResponse)
 async def initiate_upload(
     body: schemas.InitiateUploadRequest,
@@ -123,10 +163,9 @@ async def finalize_upload(
     if analysis.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # 2. Update the prompt field
+    # 2. Update the prompt_flow_id field
     try:
-        # Update the analysis with the provided prompt
-        analysis.prompt = body.prompt
+        analysis.prompt_flow_id = body.prompt_flow_id
         await analysis_repo.db.commit()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error updating analysis: {str(e)}")
@@ -166,9 +205,9 @@ async def rerun_analysis(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read transcript from storage: {str(e)}")
 
-    # Update the prompt if provided
-    if body.prompt:
-        analysis.prompt = body.prompt
+    # Update the prompt flow if provided
+    if getattr(body, "prompt_flow_id", None):
+        analysis.prompt_flow_id = body.prompt_flow_id
         await analysis_repo.db.commit()
 
     # Update status to ANALYSIS_PENDING before enqueuing task
@@ -347,7 +386,7 @@ async def get_analysis_detail(
         except Exception:
             transcript_content = ""
 
-    # Latest analysis content and people involved
+    # Latest analysis content and people involved (keep compatibility)
     latest_analysis_content = ""
     people_involved = None
     action_plan = None
@@ -359,7 +398,6 @@ async def get_analysis_detail(
             except Exception:
                 latest_analysis_content = ""
         people_involved = latest_version.people_involved
-        # Extract structured plan if available
         try:
             if latest_version.structured_plan is not None:
                 if isinstance(latest_version.structured_plan, dict) and "extractions" in latest_version.structured_plan:
@@ -376,7 +414,7 @@ async def get_analysis_detail(
         status=a.status,
         created_at=a.created_at,
         filename=a.filename,
-        prompt=a.prompt,
+        prompt=None,
         transcript=transcript_content,
         latest_analysis=latest_analysis_content or "",
         people_involved=people_involved,
@@ -387,6 +425,16 @@ async def get_analysis_detail(
                 prompt_used=v.prompt_used,
                 created_at=v.created_at,
                 people_involved=v.people_involved,
+                steps=[
+                    schemas.AnalysisStepResult(
+                        id=sr.id,
+                        step_name=sr.step_name,
+                        step_order=sr.step_order,
+                        status=str(sr.status.value) if hasattr(sr.status, "value") else str(sr.status),
+                        content=sr.content,
+                    )
+                    for sr in (v.steps or [])
+                ],
             )
             for v in versions_sorted
         ],

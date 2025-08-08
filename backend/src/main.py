@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles 
 from src.services.prompts import PREDEFINED_PROMPTS
 from src.api.endpoints import users, analysis
+from src.api.endpoints import prompt_flows as prompt_flows
 from src.api.endpoints import user_prompts as user_prompts
 import logging
 import litellm
@@ -41,6 +42,7 @@ api_router = APIRouter()
 api_router.include_router(users.router, prefix="/users", tags=["users"]) 
 api_router.include_router(analysis.router, prefix="/analysis", tags=["analysis"]) 
 api_router.include_router(user_prompts.router, prefix="/user-prompts", tags=["user-prompts"])
+api_router.include_router(prompt_flows.router, prefix="/prompt-flows", tags=["prompt-flows"]) 
 
 from src.infrastructure.database import get_async_db
 from src.infrastructure.repositories.user_prompt_repository import UserPromptRepository

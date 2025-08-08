@@ -3,15 +3,14 @@ import { createBrowserRouter } from 'react-router-dom'
 import App from './App'
 import LoginPage from './pages/LoginPage'
 import SignupPage from './pages/SignupPage'
-import DashboardPage from './pages/DashboardPage'
+import MeetingsPage from './pages/MeetingsPage'
 
 import ProtectedRoute from './routes/ProtectedRoute'
 import AnalysisDetailPage from './pages/AnalysisDetailPage'
 import DashboardLayout from './layouts/DashboardLayout'
 import PromptsPage from './pages/PromptsPage'
-import HistoryPage from './pages/HistoryPage'
 import SettingsPage from './pages/SettingsPage'
-import DocumentsPage from './pages/DocumentsPage'
+import PromptFlowEditorPage from './pages/PromptFlowEditorPage'
 
 const router = createBrowserRouter([
   {
@@ -36,12 +35,12 @@ const router = createBrowserRouter([
         children: [
           {
             index: true,
-            element: <DashboardPage />, // Tableau de bord
+            element: <MeetingsPage />, // Page d'accueil: Réunions
           },
           
           {
-            path: 'analysis',
-            element: <DashboardPage />, // Liste/placeholder
+            path: 'meetings',
+            element: <MeetingsPage />,
           },
           {
             path: 'analysis/:analysisId',
@@ -52,16 +51,16 @@ const router = createBrowserRouter([
             element: <PromptsPage />,
           },
           {
-            path: 'history',
-            element: <HistoryPage />,
+            path: 'prompts/new',
+            element: <PromptFlowEditorPage />,
+          },
+          {
+            path: 'prompts/:flowId',
+            element: <PromptFlowEditorPage />,
           },
           {
             path: 'settings',
             element: <SettingsPage />,
-          },
-          {
-            path: 'documents',
-            element: <DocumentsPage />,
           },
         ],
       },

@@ -57,7 +57,7 @@ export default function DocumentCard({ analysis, onDeleteSuccess }: Props) {
   return (
     <Card>
       <CardHeader className="border-b">
-        <CardTitle className="truncate" title={analysis.filename}>{analysis.filename || 'Document'}</CardTitle>
+        <CardTitle className="text-base truncate" title={analysis.filename}>{analysis.filename || 'Document'}</CardTitle>
         <CardDescription>{createdLabel}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

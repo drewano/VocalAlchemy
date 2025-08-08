@@ -4,7 +4,7 @@ import * as api from '@/services/api'
 export function useAnalysisSubmit() {
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const submitAnalysis = useCallback(async (file: File, prompt: string): Promise<string> => {
+  const submitAnalysis = useCallback(async (file: File, promptFlowId: string): Promise<string> => {
     setIsSubmitting(true)
     try {
       // Étape 1 : Initiation - Obtenir l'URL SAS et créer l'enregistrement d'analyse
@@ -14,7 +14,7 @@ export function useAnalysisSubmit() {
       await api.uploadFileToSasUrl(sasUrl, file)
 
       // Étape 3 : Finalisation - Déclencher le traitement en arrière-plan
-      await api.finalizeUpload(analysisId, prompt)
+      await api.finalizeUpload(analysisId, promptFlowId)
 
       // Étape 4 : Résultat - Retourner l'ID pour la navigation
       return analysisId

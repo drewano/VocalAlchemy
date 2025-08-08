@@ -86,10 +86,10 @@ export async function uploadFileToSasUrl(sasUrl: string, file: File): Promise<vo
  * @param analysisId L'ID de l'analyse créée lors de l'initiation
  * @param prompt Le prompt à utiliser pour l'analyse
  */
-export async function finalizeUpload(analysisId: string, prompt: string): Promise<void> {
-  await api.post('/analysis/finalize-upload/', { 
-    analysis_id: analysisId, 
-    prompt 
+export async function finalizeUpload(analysisId: string, promptFlowId: string): Promise<void> {
+  await api.post('/analysis/finalize-upload/', {
+    analysis_id: analysisId,
+    prompt_flow_id: promptFlowId,
   })
 }
 
@@ -118,10 +118,18 @@ export async function getAnalysisDetail(taskId: string): Promise<AnalysisDetail>
   return res.data
 }
 
-export async function rerunAnalysis(analysisId: string, prompt: string): Promise<any> {
-  const res = await api.post(`/analysis/rerun/${analysisId}`, { 
-    analysis_id: analysisId, 
-    prompt 
+export async function updateTranscript(analysisId: string, content: string): Promise<void> {
+  await api.put(`/analysis/${analysisId}/transcript`, { content })
+}
+
+export async function updateStepResult(stepResultId: string, content: string): Promise<void> {
+  await api.put(`/analysis/step-result/${stepResultId}`, { content })
+}
+
+export async function rerunAnalysis(analysisId: string, promptFlowId: string): Promise<any> {
+  const res = await api.post(`/analysis/rerun/${analysisId}`, {
+    analysis_id: analysisId,
+    prompt_flow_id: promptFlowId,
   })
   return res.data
 }

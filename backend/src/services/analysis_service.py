@@ -3,11 +3,13 @@ import os
 import tempfile
 from typing import Protocol
 from pydub import AudioSegment
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 
 from ..infrastructure.repositories.analysis_repository import AnalysisRepository
 from .external_apis.litellm_ai_processor import LiteLLMAIProcessor
 from ..infrastructure.sql_models import AnalysisStatus
-from . import pipeline_prompts
+from ..infrastructure import sql_models as models
 from .blob_storage_service import BlobStorageService
 import uuid
 
@@ -174,16 +176,100 @@ class AnalysisService:
             return ("running", status_resp)
 
     async def run_ai_analysis_pipeline(self, analysis_id: str) -> None:
-        analysis = await self.analysis_repo.get_by_id(analysis_id)
+        # Load analysis with associated prompt flow and steps
+        stmt = (
+            select(models.Analysis)
+            .options(
+                joinedload(models.Analysis.prompt_flow).joinedload(models.PromptFlow.steps)
+            )
+            .where(models.Analysis.id == analysis_id)
+        )
+        result = await self.analysis_repo.db.execute(stmt)
+        analysis = result.unique().scalar_one_or_none()
         if not analysis:
             raise ValueError(f"Analysis not found: {analysis_id}")
         if not getattr(analysis, "transcript_blob_name", None):
             raise FileNotFoundError("Transcript blob not found for analysis")
 
+        # If using a predefined (legacy) prompt, run single-step analysis path
+        if (pf_id := getattr(analysis, "prompt_flow_id", None)) and str(pf_id).startswith("predefined_"):
+            from ..services.prompts import PREDEFINED_PROMPTS
+
+            # Load transcript
+            transcript = await self.blob_storage_service.download_blob_as_text(analysis.transcript_blob_name)
+            if not isinstance(transcript, str) or not transcript.strip():
+                await self.analysis_repo.update_status(analysis_id, AnalysisStatus.ANALYSIS_FAILED)
+                analysis = await self.analysis_repo.get_by_id(analysis_id)
+                if analysis:
+                    analysis.error_message = "Transcript is empty or invalid. Cannot run AI analysis."
+                    try:
+                        await self.analysis_repo.db.commit()
+                    except Exception:
+                        pass
+                raise ValueError("Transcript is empty or invalid")
+
+            try:
+                await self.analysis_repo.update_status(analysis_id, AnalysisStatus.ANALYSIS_IN_PROGRESS)
+
+                # Extract legacy prompt name from id and fetch content
+                legacy_name_key = str(pf_id).removeprefix("predefined_").replace("_", " ")
+                prompt_content = PREDEFINED_PROMPTS.get(legacy_name_key)
+                if not prompt_content:
+                    raise ValueError(f"Unknown predefined prompt: {legacy_name_key}")
+
+                # Execute single-step prompt
+                result_text = await self.ai_analyzer.execute_prompt(
+                    system_prompt=prompt_content,
+                    user_content=transcript,
+                )
+
+                final_report_content = f"# Rapport d'analyse\n\n## {legacy_name_key}\n\n{result_text}\n"
+
+                transcript_snippet = transcript[:200]
+                analysis_snippet = final_report_content[:200]
+
+                report_blob_name = f"{analysis_id}/versions/{str(uuid.uuid4())}/report.md"
+                await self.blob_storage_service.upload_blob(final_report_content, report_blob_name)
+                await self.analysis_repo.add_version(
+                    analysis_id=analysis_id,
+                    prompt_used=legacy_name_key,
+                    result_blob_name=report_blob_name,
+                    people_involved=None,
+                    structured_plan=None,
+                )
+                await self.analysis_repo.update_paths_and_status(
+                    analysis_id,
+                    status=AnalysisStatus.COMPLETED,
+                    result_blob_name=report_blob_name,
+                    transcript_snippet=transcript_snippet,
+                    analysis_snippet=analysis_snippet,
+                )
+                await self.analysis_repo.update_progress(analysis_id, 100)
+                return
+            except Exception as e:
+                error_details = f"AI analysis failed. Error type: {type(e).__name__}. Details: {e}"
+                logging.error(error_details)
+                await self.analysis_repo.update_status(analysis_id, AnalysisStatus.ANALYSIS_FAILED)
+                analysis = await self.analysis_repo.get_by_id(analysis_id)
+                if analysis:
+                    analysis.error_message = error_details
+                    try:
+                        await self.analysis_repo.db.commit()
+                    except Exception:
+                        pass
+                raise
+
+        # Resolve prompt flow
+        prompt_flow = getattr(analysis, "prompt_flow", None)
+        if not prompt_flow or not getattr(prompt_flow, "steps", None):
+            raise ValueError("No prompt flow configured for this analysis")
+
+        # Ensure steps are ordered
+        ordered_steps = sorted(prompt_flow.steps, key=lambda s: int(getattr(s, "step_order", 0)))
+
+        # Load transcript content
         transcript = await self.blob_storage_service.download_blob_as_text(analysis.transcript_blob_name)
-        # Validate transcript content before running prompts
         if not isinstance(transcript, str) or not transcript.strip():
-            # Mark as failed with a helpful message, then raise
             await self.analysis_repo.update_status(analysis_id, AnalysisStatus.ANALYSIS_FAILED)
             analysis = await self.analysis_repo.get_by_id(analysis_id)
             if analysis:
@@ -197,66 +283,75 @@ class AnalysisService:
         try:
             await self.analysis_repo.update_status(analysis_id, AnalysisStatus.ANALYSIS_IN_PROGRESS)
 
-            # Étape 1 : Intervenants
-            intervenants_md = await self.ai_analyzer.execute_prompt(
-                system_prompt=pipeline_prompts.PROMPT_INTERVENANTS,
-                user_content=transcript,
-            )
-
-            # Étape 2 : Ordre du Jour
-            prompt_odj = pipeline_prompts.PROMPT_ORDRE_DU_JOUR.format(intervenants=intervenants_md)
-            ordre_du_jour_md = await self.ai_analyzer.execute_prompt(
-                system_prompt=prompt_odj,
-                user_content=transcript,
-            )
-
-            # Étape 3 : Synthèse
-            prompt_synthese = pipeline_prompts.PROMPT_SYNTHESE.format(
-                intervenants=intervenants_md,
-                ordre_du_jour=ordre_du_jour_md,
-            )
-            synthese_md = await self.ai_analyzer.execute_prompt(
-                system_prompt=prompt_synthese,
-                user_content=transcript,
-            )
-
-            # Étape 4 : Décisions et Actions
-            prompt_decisions = pipeline_prompts.PROMPT_DECISIONS.format(
-                intervenants=intervenants_md,
-                synthese=synthese_md,
-            )
-            decisions_md = await self.ai_analyzer.execute_prompt(
-                system_prompt=prompt_decisions,
-                user_content=transcript,
-            )
-
-            # Assemblage Final
-            final_report_content = (
-                "# Procès-Verbal de Réunion\n\n"
-                "## Intervenants\n" + intervenants_md.strip() + "\n\n"
-                "## Ordre du jour\n" + ordre_du_jour_md.strip() + "\n\n"
-                "## Synthèse des échanges\n" + synthese_md.strip() + "\n\n"
-                "## Relevé de décisions et d'actions\n" + decisions_md.strip() + "\n"
-            )
-            transcript_snippet = transcript[:200]
-            analysis_snippet = final_report_content[:200]
-
-            report_blob_name = f"{analysis_id}/versions/{str(uuid.uuid4())}/report.md"
-            await self.blob_storage_service.upload_blob(final_report_content, report_blob_name)
-            await self.analysis_repo.add_version(
+            # Create an analysis version for this run
+            version = await self.analysis_repo.add_version(
                 analysis_id=analysis_id,
-                prompt_used=analysis.prompt or "",
-                result_blob_name=report_blob_name,
+                prompt_used=getattr(prompt_flow, "name", ""),
+                result_blob_name=None,
                 people_involved=None,
                 structured_plan=None,
             )
-            await self.analysis_repo.update_paths_and_status(
-                analysis_id,
-                status=AnalysisStatus.COMPLETED,
-                result_blob_name=report_blob_name,
-                transcript_snippet=transcript_snippet,
-                analysis_snippet=analysis_snippet
-            )
+
+            # Pre-create step result rows with PENDING status
+            from ..infrastructure.sql_models import AnalysisStepResult, AnalysisStepStatus
+            step_results_index: dict[int, AnalysisStepResult] = {}
+            for step in ordered_steps:
+                sr = AnalysisStepResult(
+                    analysis_version_id=version.id,
+                    step_name=step.name,
+                    step_order=int(getattr(step, "step_order", 0)),
+                    status=AnalysisStepStatus.PENDING,
+                    content=None,
+                )
+                self.analysis_repo.db.add(sr)
+                step_results_index[sr.step_order] = sr
+            await self.analysis_repo.db.commit()
+            # Refresh to obtain IDs
+            for sr in step_results_index.values():
+                await self.analysis_repo.db.refresh(sr)
+
+            # Shared context across steps
+            flow_context: dict[str, str] = {
+                "transcript": transcript,
+                "analysis_id": analysis_id,
+                "flow_name": prompt_flow.name,
+            }
+
+            # Execute each step and update its result progressively
+            for step in ordered_steps:
+                order = int(getattr(step, "step_order", 0))
+                sr = step_results_index.get(order)
+                if not sr:
+                    continue
+
+                # Mark IN_PROGRESS
+                sr.status = AnalysisStepStatus.IN_PROGRESS
+                await self.analysis_repo.db.commit()
+
+                # Prepare system prompt
+                try:
+                    system_prompt = (step.content or "").format(**flow_context)
+                except Exception:
+                    system_prompt = step.content or ""
+
+                # Execute
+                try:
+                    result_text = await self.ai_analyzer.execute_prompt(
+                        system_prompt=system_prompt,
+                        user_content=transcript,
+                    )
+                    sr.content = result_text
+                    sr.status = AnalysisStepStatus.COMPLETED
+                    flow_context[step.name] = result_text
+                except Exception as e:
+                    sr.content = f"Step failed: {e}"
+                    sr.status = AnalysisStepStatus.FAILED
+                    # Still continue to process next steps or break? Choose continue for resilience
+                finally:
+                    await self.analysis_repo.db.commit()
+
+            # Finally, mark analysis as COMPLETED
+            await self.analysis_repo.update_status(analysis_id, AnalysisStatus.COMPLETED)
             await self.analysis_repo.update_progress(analysis_id, 100)
         except Exception as e:
             error_details = f"AI analysis failed. Error type: {type(e).__name__}. Details: {e}"
@@ -344,3 +439,48 @@ class AnalysisService:
                     os.remove(path)
                 except Exception:
                     pass
+
+    async def overwrite_transcript_content(self, analysis_id: str, user_id: int, content: str) -> None:
+        analysis = await self.analysis_repo.get_by_id(analysis_id)
+        if not analysis:
+            raise AnalysisNotFoundException("Analysis not found")
+        if analysis.user_id != user_id:
+            raise PermissionError("Access denied")
+        if not getattr(analysis, "transcript_blob_name", None):
+            raise FileNotFoundError("Transcript not found")
+
+        # Overwrite transcript blob
+        await self.blob_storage_service.upload_blob(content, analysis.transcript_blob_name)
+        # Update snippet
+        snippet = (content or "")[:200]
+        await self.analysis_repo.update_paths_and_status(
+            analysis_id,
+            transcript_snippet=snippet,
+        )
+
+    async def update_step_result_content(self, step_result_id: str, user_id: int, content: str) -> None:
+        # Ensure the step result belongs to the requesting user via version -> analysis
+        from ..infrastructure import sql_models as models
+        from sqlalchemy import select
+        from sqlalchemy.orm import joinedload
+
+        stmt = (
+            select(models.AnalysisStepResult)
+            .options(joinedload(models.AnalysisStepResult.version).joinedload(models.AnalysisVersion.analysis_record))
+            .where(models.AnalysisStepResult.id == step_result_id)
+        )
+        result = await self.analysis_repo.db.execute(stmt)
+        step_result = result.unique().scalar_one_or_none()
+        if not step_result:
+            raise ValueError("Step result not found")
+
+        version = getattr(step_result, "version", None)
+        analysis = getattr(version, "analysis_record", None)
+        if not analysis or analysis.user_id != user_id:
+            raise PermissionError("Access denied")
+
+        step_result.content = content
+        try:
+            await self.analysis_repo.db.commit()
+        except Exception:
+            pass

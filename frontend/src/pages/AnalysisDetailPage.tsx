@@ -11,24 +11,101 @@ import { useAnalysisDetail } from '@/hooks/useAnalysisDetail'
 import AudioPlayer from '@/components/AudioPlayer'
 import ActionPlanTable from '@/components/ActionPlanTable'
 import { Spinner } from '@/components/ui/spinner'
+import MarkdownDisplay from '@/components/MarkdownDisplay'
+import { useState } from 'react'
+import * as api from '@/services/api'
+import type { AnalysisStepResult } from '@/types'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { usePromptFlows } from '@/hooks/usePromptFlows'
+
+const StepItem: React.FC<{ step: AnalysisStepResult }> = ({ step }) => {
+  const [isEditing, setIsEditing] = useState(false)
+  const [draft, setDraft] = useState(step.content || '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const onSave = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      await api.updateStepResult(step.id, draft)
+      // Update local state post-save
+      step.content = draft
+      setIsEditing(false)
+    } catch (e: any) {
+      setError(e?.message || 'Erreur lors de la sauvegarde')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (step.status === 'PENDING' || step.status === 'IN_PROGRESS') {
+    return (
+      <div className="space-y-2">
+        <div className="text-sm font-medium">{step.step_name}</div>
+        <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+          <LoaderCircle className="h-4 w-4 animate-spin" /> En cours...
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium">{step.step_name}</div>
+        <div className="flex gap-2">
+          {isEditing ? (
+            <>
+              <Button size="sm" onClick={onSave} disabled={saving}>
+                {saving ? (
+                  <span className="inline-flex items-center gap-2"><LoaderCircle className="h-4 w-4 animate-spin" /> Enregistrement...</span>
+                ) : (
+                  'Enregistrer'
+                )}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => { setIsEditing(false); setDraft(step.content || '') }}>Annuler</Button>
+            </>
+          ) : (
+            <Button size="sm" variant="outline" onClick={() => setIsEditing(true)}>Modifier</Button>
+          )}
+        </div>
+      </div>
+      {error && <div className="text-sm text-destructive">{error}</div>}
+      {isEditing ? (
+        <Textarea value={draft} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDraft(e.target.value)} className="min-h-40" />
+      ) : step.status === 'COMPLETED' && step.content ? (
+        <MarkdownDisplay content={step.content} />
+      ) : (
+        <div className="text-sm text-muted-foreground">Aucun contenu.</div>
+      )}
+    </div>
+  )
+}
 
 const AnalysisDetailPage: React.FC = () => {
   const { analysisId } = useParams<{ analysisId: string }>()
+  const { flows, isLoading: isLoadingFlows } = usePromptFlows()
 
   const {
     analysisData,
-    currentAnalysis,
-    currentPrompt,
     currentPeople,
     isLoading,
     isRerunning,
-    setCurrentPrompt,
     rerunAnalysis,
     selectVersion,
     actionPlan,
+    editedTranscript,
+    setEditedTranscript,
+    saveTranscript,
+    selectedFlowForRerun,
+    setSelectedFlowForRerun,
   } = useAnalysisDetail(analysisId)
 
   const transcriptRef = useRef<HTMLElement | null>(null)
+  const scrollToRerunSection = useCallback(() => {
+    document.getElementById('rerun-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
 
   const handleActionItemClick = useCallback((interval: { start: number; end: number }) => {
     if (!transcriptRef.current || !analysisData?.transcript) return
@@ -95,10 +172,20 @@ const AnalysisDetailPage: React.FC = () => {
 
   return (
     <div className="container mx-auto py-8 space-y-8">
+      {/* Barre d'actions sticky */}
+      <div className="sticky top-0 z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-4 mb-2 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-lg font-semibold">Détails de la réunion</div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={scrollToRerunSection}>Relancer</Button>
+          </div>
+        </div>
+      </div>
+
       {/* Panneau du haut */}
       <Card>
         <CardHeader>
-          <CardTitle>Détails de l'analyse</CardTitle>
+          <CardTitle className="text-base">Détails de l'analyse</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -147,30 +234,50 @@ const AnalysisDetailPage: React.FC = () => {
             {isTranscribing ? (
               <Spinner text="Transcription en cours avec Azure AI Speech..." />
             ) : (
-              <pre className="bg-muted/50 p-4 rounded-lg max-h-[70vh] overflow-y-auto">
-                <code ref={transcriptRef as any} className="whitespace-pre-wrap">{analysisData.transcript}</code>
-              </pre>
+              <div className="space-y-3">
+                <Textarea
+                  value={editedTranscript}
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setEditedTranscript(e.target.value)}
+                  className="min-h-[40vh]"
+                />
+                <div className="flex gap-2">
+                  <Button onClick={saveTranscript} disabled={!editedTranscript || editedTranscript === analysisData.transcript}>Enregistrer la transcription</Button>
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>
 
-        {/* Panneau de droite */}
+      {/* Panneau de droite */}
         <div className="space-y-6">
           {/* Rerun */}
-          <Card>
+          <Card id="rerun-section">
             <CardHeader>
-              <CardTitle>Relancer l'analyse</CardTitle>
+              <CardTitle className="text-base">Relancer l'analyse</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Textarea
-                value={currentPrompt}
-                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-                  setCurrentPrompt(e.target.value)
-                }
-                placeholder="Saisissez un nouveau prompt..."
-                className="min-h-24"
-              />
-              <Button onClick={rerunAnalysis} disabled={isRerunning || !currentPrompt.trim()}>
+              <Select
+                value={selectedFlowForRerun}
+                onValueChange={setSelectedFlowForRerun}
+                disabled={isLoadingFlows}
+              >
+                <SelectTrigger aria-label="Sélectionner un flux de prompt">
+                  <SelectValue placeholder={isLoadingFlows ? 'Chargement…' : 'Sélectionner un flux'} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectLabel>Flux disponibles</SelectLabel>
+                    {flows.length === 0 ? (
+                      <SelectItem disabled value="__none__">Aucun flux</SelectItem>
+                    ) : (
+                      flows.map((flow) => (
+                        <SelectItem key={flow.id} value={flow.id}>{flow.name}</SelectItem>
+                      ))
+                    )}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <Button onClick={rerunAnalysis} disabled={isRerunning || !selectedFlowForRerun}>
                 {isRerunning ? (
                   <span className="inline-flex items-center gap-2">
                     <LoaderCircle className="h-4 w-4 animate-spin" /> Relance...
@@ -182,20 +289,32 @@ const AnalysisDetailPage: React.FC = () => {
             </CardContent>
           </Card>
 
-          {/* Résultat courant */}
+          {/* Résultats par étapes */}
           <Card>
             <CardHeader>
-              <CardTitle>Résultat de l'analyse</CardTitle>
+              <CardTitle className="text-base">Résultats par étapes</CardTitle>
             </CardHeader>
-            <CardContent>
-              {isAnalyzing ? (
+            <CardContent className="space-y-4">
+              {isAnalyzing && (
                 <Spinner text="L'IA analyse la transcription..." />
-              ) : currentAnalysis ? (
-                <pre className="bg-muted/50 p-4 rounded-lg max-h-[40vh] overflow-y-auto">
-                  <code className="whitespace-pre-wrap">{currentAnalysis}</code>
-                </pre>
+              )}
+              {analysisData.versions && analysisData.versions.length > 0 ? (
+                (() => {
+                  const latestVersion = analysisData.versions[0]
+                  return (
+                    <div className="space-y-6">
+                      {latestVersion.steps && latestVersion.steps.length > 0 ? (
+                        latestVersion.steps.map((step) => (
+                          <StepItem key={step.id} step={step} />
+                        ))
+                      ) : (
+                        <div className="text-sm text-muted-foreground">Aucune étape pour cette version.</div>
+                      )}
+                    </div>
+                  )
+                })()
               ) : (
-                <div className="text-sm text-muted-foreground">Aucun résultat pour l'instant.</div>
+                <div className="text-sm text-muted-foreground">Aucune version disponible.</div>
               )}
             </CardContent>
           </Card>
@@ -203,7 +322,7 @@ const AnalysisDetailPage: React.FC = () => {
           {/* Historique des versions */}
           <Card>
             <CardHeader>
-              <CardTitle>Historique des versions</CardTitle>
+              <CardTitle className="text-base">Historique des versions</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">

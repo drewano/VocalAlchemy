@@ -1,8 +1,8 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from sqlalchemy import select, func
 from sqlalchemy.orm import joinedload
-from src.infrastructure.repositories.base_repository import BaseRepository
-from src.infrastructure import sql_models as models
+from .base_repository import BaseRepository
+from .. import sql_models as models
 
 
 class AnalysisRepository(BaseRepository):
@@ -44,7 +44,9 @@ class AnalysisRepository(BaseRepository):
     async def get_detailed_by_id(self, analysis_id: str) -> Optional[models.Analysis]:
         stmt = (
             select(models.Analysis)
-            .options(joinedload(models.Analysis.versions))
+            .options(
+                joinedload(models.Analysis.versions).joinedload(models.AnalysisVersion.steps)
+            )
             .where(models.Analysis.id == analysis_id)
         )
         result = await self.db.execute(stmt)
@@ -62,7 +64,11 @@ class AnalysisRepository(BaseRepository):
         return result.scalars().all()
 
     async def count_by_user(self, user_id: int) -> int:
-        stmt = select(func.count()).select_from(models.Analysis).where(models.Analysis.user_id == user_id)
+        stmt = (
+            select(func.count())
+            .select_from(models.Analysis)
+            .where(models.Analysis.user_id == user_id)
+        )
         result = await self.db.execute(stmt)
         return result.scalar_one()
 
@@ -92,7 +98,7 @@ class AnalysisRepository(BaseRepository):
         analysis.progress = max(0, min(100, int(progress)))
         await self.db.commit()
 
-    async def add_version(self, analysis_id: str, prompt_used: str, result_blob_name: str, people_involved: Optional[str] = None, structured_plan: Optional[dict] = None) -> models.AnalysisVersion:
+    async def add_version(self, analysis_id: str, prompt_used: str, result_blob_name: Optional[str] = None, people_involved: Optional[str] = None, structured_plan: Optional[dict] = None) -> models.AnalysisVersion:
         version = models.AnalysisVersion(
             analysis_id=analysis_id,
             prompt_used=prompt_used,
