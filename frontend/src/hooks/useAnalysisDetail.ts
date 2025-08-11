@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import * as api from '@/services/api'
-import type { AnalysisDetail, AnalysisVersion } from '@/types'
+import type { AnalysisDetail } from '@/types'
 
 export function useAnalysisDetail(analysisId?: string) {
   const [analysisData, setAnalysisData] = useState<AnalysisDetail | null>(null)
@@ -92,17 +92,6 @@ export function useAnalysisDetail(analysisId?: string) {
     }
   }, [analysisId, selectedFlowForRerun])
 
-  const selectVersion = useCallback(async (v: AnalysisVersion) => {
-    setCurrentPeople(v.people_involved || 'Non spécifié')
-    try {
-      // Version detail load still supported: latest_analysis view deprecated in UI
-      await api.getVersionResult(v.id)
-    } catch (e: any) {
-      setError(e)
-      console.error('Failed to load version result', e)
-    }
-  }, [])
-
   const saveTranscript = useCallback(async () => {
     if (!analysisId) return
     setIsSaving(true)
@@ -128,7 +117,6 @@ export function useAnalysisDetail(analysisId?: string) {
     isSaving,
     error,
     rerunAnalysis,
-    selectVersion,
     editedTranscript,
     setEditedTranscript,
     saveTranscript,

@@ -8,14 +8,13 @@ import MarkdownDisplay from '@/components/MarkdownDisplay'
 import type { AnalysisStepResult } from '@/types'
 import { updateStepResult, relaunchAnalysisStep } from '@/services/api'
 import { downloadTextAsFile } from '@/lib/utils'
-import { useToast } from '@/hooks/use-toast'
+import { toast } from 'sonner'
 
 interface StepResultItemProps {
   step: AnalysisStepResult
 }
 
 const StepResultItem: React.FC<StepResultItemProps> = ({ step }) => {
-  const { toast } = useToast()
   const [isEditing, setIsEditing] = useState(false)
   const [editedContent, setEditedContent] = useState(step.content || '')
   const [isPromptDialogOpen, setIsPromptDialogOpen] = useState(false)

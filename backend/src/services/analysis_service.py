@@ -180,6 +180,44 @@ class AnalysisService:
         else:
             return ("running", status_resp)
 
+    async def _execute_ai_step(self, step, sr, transcript: str, flow_context: dict) -> None:
+        """
+        Execute a single AI analysis step.
+        
+        Args:
+            step: The PromptStep object
+            sr: The AnalysisStepResult object
+            transcript: The transcript string
+            flow_context: The context dictionary
+        """
+        from ..infrastructure.sql_models import AnalysisStepStatus
+        
+        # Mark IN_PROGRESS
+        sr.status = AnalysisStepStatus.IN_PROGRESS
+        await self.analysis_repo.db.commit()
+
+        # Prepare system prompt
+        try:
+            system_prompt = (step.content or "").format(**flow_context)
+        except Exception:
+            system_prompt = step.content or ""
+
+        # Execute
+        try:
+            result_text = await self.ai_analyzer.execute_prompt(
+                system_prompt=system_prompt,
+                user_content=transcript,
+            )
+            sr.content = result_text
+            sr.status = AnalysisStepStatus.COMPLETED
+            flow_context[step.name] = result_text
+        except Exception as e:
+            sr.content = f"Step failed: {e}"
+            sr.status = AnalysisStepStatus.FAILED
+            # Still continue to process next steps or break? Choose continue for resilience
+        finally:
+            await self.analysis_repo.db.commit()
+
     async def run_ai_analysis_pipeline(self, analysis_id: str) -> None:
         # Load analysis with associated prompt flow and steps
         stmt = (
@@ -195,88 +233,6 @@ class AnalysisService:
             raise ValueError(f"Analysis not found: {analysis_id}")
         if not getattr(analysis, "transcript_blob_name", None):
             raise FileNotFoundError("Transcript blob not found for analysis")
-
-        # If using a predefined (legacy) prompt, run single-step analysis path
-        if (pf_id := getattr(analysis, "prompt_flow_id", None)) and str(pf_id).startswith("predefined_"):
-            from ..services.prompts import PREDEFINED_PROMPTS
-
-            # Load transcript
-            transcript = await self.blob_storage_service.download_blob_as_text(analysis.transcript_blob_name)
-            if not isinstance(transcript, str) or not transcript.strip():
-                await self.analysis_repo.update_status(analysis_id, AnalysisStatus.ANALYSIS_FAILED)
-                analysis = await self.analysis_repo.get_by_id(analysis_id)
-                if analysis:
-                    analysis.error_message = "Transcript is empty or invalid. Cannot run AI analysis."
-                    try:
-                        await self.analysis_repo.db.commit()
-                    except Exception:
-                        pass
-                raise ValueError("Transcript is empty or invalid")
-
-            try:
-                await self.analysis_repo.update_status(analysis_id, AnalysisStatus.ANALYSIS_IN_PROGRESS)
-
-                # Extract legacy prompt name from id and fetch content
-                legacy_name_key = str(pf_id).removeprefix("predefined_").replace("_", " ")
-                prompt_content = PREDEFINED_PROMPTS.get(legacy_name_key)
-                if not prompt_content:
-                    raise ValueError(f"Unknown predefined prompt: {legacy_name_key}")
-
-                # Execute single-step prompt
-                result_text = await self.ai_analyzer.execute_prompt(
-                    system_prompt=prompt_content,
-                    user_content=transcript,
-                )
-
-                final_report_content = f"# Rapport d'analyse\n\n## {legacy_name_key}\n\n{result_text}\n"
-
-                transcript_snippet = transcript[:200]
-                analysis_snippet = final_report_content[:200]
-
-                report_blob_name = f"{analysis_id}/versions/{str(uuid.uuid4())}/report.md"
-                await self.blob_storage_service.upload_blob(final_report_content, report_blob_name)
-                version = await self.analysis_repo.add_version(
-                    analysis_id=analysis_id,
-                    prompt_used=legacy_name_key,
-                    result_blob_name=report_blob_name,
-                    people_involved=None,
-                    structured_plan=None,
-                )
-                # Also store as a single step result for UI progressive display
-                from ..infrastructure.sql_models import AnalysisStepResult, AnalysisStepStatus
-                step_row = AnalysisStepResult(
-                    analysis_version_id=version.id,
-                    step_name=legacy_name_key,
-                    step_order=1,
-                    status=AnalysisStepStatus.COMPLETED,
-                    content=result_text,
-                )
-                self.analysis_repo.db.add(step_row)
-                try:
-                    await self.analysis_repo.db.commit()
-                except Exception:
-                    pass
-                await self.analysis_repo.update_paths_and_status(
-                    analysis_id,
-                    status=AnalysisStatus.COMPLETED,
-                    result_blob_name=report_blob_name,
-                    transcript_snippet=transcript_snippet,
-                    analysis_snippet=analysis_snippet,
-                )
-                await self.analysis_repo.update_progress(analysis_id, 100)
-                return
-            except Exception as e:
-                error_details = f"AI analysis failed. Error type: {type(e).__name__}. Details: {e}"
-                logging.error(error_details)
-                await self.analysis_repo.update_status(analysis_id, AnalysisStatus.ANALYSIS_FAILED)
-                analysis = await self.analysis_repo.get_by_id(analysis_id)
-                if analysis:
-                    analysis.error_message = error_details
-                    try:
-                        await self.analysis_repo.db.commit()
-                    except Exception:
-                        pass
-                raise
 
         # Resolve prompt flow
         prompt_flow = getattr(analysis, "prompt_flow", None)
@@ -343,31 +299,8 @@ class AnalysisService:
                 if not sr:
                     continue
 
-                # Mark IN_PROGRESS
-                sr.status = AnalysisStepStatus.IN_PROGRESS
-                await self.analysis_repo.db.commit()
-
-                # Prepare system prompt
-                try:
-                    system_prompt = (step.content or "").format(**flow_context)
-                except Exception:
-                    system_prompt = step.content or ""
-
-                # Execute
-                try:
-                    result_text = await self.ai_analyzer.execute_prompt(
-                        system_prompt=system_prompt,
-                        user_content=transcript,
-                    )
-                    sr.content = result_text
-                    sr.status = AnalysisStepStatus.COMPLETED
-                    flow_context[step.name] = result_text
-                except Exception as e:
-                    sr.content = f"Step failed: {e}"
-                    sr.status = AnalysisStepStatus.FAILED
-                    # Still continue to process next steps or break? Choose continue for resilience
-                finally:
-                    await self.analysis_repo.db.commit()
+                # Execute the AI step using the new private method
+                await self._execute_ai_step(step, sr, transcript, flow_context)
 
             # Finally, mark analysis as COMPLETED
             await self.analysis_repo.update_status(analysis_id, AnalysisStatus.COMPLETED)
@@ -479,17 +412,7 @@ class AnalysisService:
 
     async def update_step_result_content(self, step_result_id: str, user_id: int, content: str) -> None:
         # Ensure the step result belongs to the requesting user via version -> analysis
-        from ..infrastructure import sql_models as models
-        from sqlalchemy import select
-        from sqlalchemy.orm import joinedload
-
-        stmt = (
-            select(models.AnalysisStepResult)
-            .options(joinedload(models.AnalysisStepResult.version).joinedload(models.AnalysisVersion.analysis_record))
-            .where(models.AnalysisStepResult.id == step_result_id)
-        )
-        result = await self.analysis_repo.db.execute(stmt)
-        step_result = result.unique().scalar_one_or_none()
+        step_result = await self.analysis_repo.get_step_result_with_analysis_owner(step_result_id)
         if not step_result:
             raise ValueError("Step result not found")
 
@@ -521,250 +444,16 @@ class AnalysisService:
         # Enfiler la tâche de transcription
         # Note: L'enfilement de la tâche se fait dans la couche API/worker, pas dans le service
 
-    async def download_results_as_word(self, analysis_id: str, user_id: int, content_type: str = "full"):
-        """
-        Récupère soit la transcription, soit l'assemblage des résultats, et retourne un objet BytesIO pour un fichier .docx.
-        
-        Args:
-            analysis_id: ID de l'analyse
-            user_id: ID de l'utilisateur
-            content_type: "transcript" pour seulement la transcription, "full" pour l'analyse complète
-            
-        Returns:
-            BytesIO: Buffer contenant le document Word
-        """
-        # Vérifier que l'analyse existe et appartient à l'utilisateur
-        analysis = await self.analysis_repo.get_detailed_by_id(analysis_id)
-        if not analysis:
-            raise AnalysisNotFoundException("Analysis not found")
-        if analysis.user_id != user_id:
-            raise PermissionError("Access denied")
-        
-        # Créer le document Word
-        document = Document()
-        
-        # Titre du document
-        document.add_heading(f'Analyse: {analysis.filename}', 0)
-        
-        # Informations générales
-        document.add_heading('Informations générales', level=1)
-        document.add_paragraph(f"Statut: {analysis.status.value if hasattr(analysis.status, 'value') else str(analysis.status)}")
-        document.add_paragraph(f"Date de création: {analysis.created_at}")
-        
-        if content_type == "transcript":
-            # Ajouter seulement la transcription
-            document.add_heading('Transcription', level=1)
-            if getattr(analysis, "transcript_blob_name", None):
-                try:
-                    transcript_content = await self.blob_storage_service.download_blob_as_text(analysis.transcript_blob_name)
-                    document.add_paragraph(transcript_content)
-                except Exception as e:
-                    document.add_paragraph(f"Erreur lors du chargement de la transcription: {str(e)}")
-            else:
-                document.add_paragraph("Aucune transcription disponible.")
-        else:
-            # Ajouter la transcription
-            document.add_heading('Transcription', level=1)
-            if getattr(analysis, "transcript_blob_name", None):
-                try:
-                    transcript_content = await self.blob_storage_service.download_blob_as_text(analysis.transcript_blob_name)
-                    document.add_paragraph(transcript_content)
-                except Exception as e:
-                    document.add_paragraph(f"Erreur lors du chargement de la transcription: {str(e)}")
-            else:
-                document.add_paragraph("Aucune transcription disponible.")
-            
-            # Ajouter les analyses détaillées
-            versions_sorted = sorted(analysis.versions or [], key=lambda v: v.created_at or 0, reverse=True)
-            if versions_sorted:
-                latest_version = versions_sorted[0]
-                document.add_heading('Analyse détaillée', level=1)
-                
-                if getattr(latest_version, "result_blob_name", None):
-                    try:
-                        analysis_content = await self.blob_storage_service.download_blob_as_text(latest_version.result_blob_name)
-                        document.add_paragraph(analysis_content)
-                    except Exception as e:
-                        document.add_paragraph(f"Erreur lors du chargement de l'analyse: {str(e)}")
-                else:
-                    document.add_paragraph("Aucune analyse disponible.")
-                
-                # Personnes impliquées
-                if latest_version.people_involved:
-                    document.add_heading('Personnes impliquées', level=1)
-                    for person in latest_version.people_involved:
-                        document.add_paragraph(f"- {person}")
-                
-                # Plan d'action
-                if latest_version.structured_plan:
-                    document.add_heading('Plan d\'action', level=1)
-                    if isinstance(latest_version.structured_plan, list):
-                        for item in latest_version.structured_plan:
-                            document.add_paragraph(f"- {item}")
-                    else:
-                        document.add_paragraph(str(latest_version.structured_plan))
-                
-                # Historique des versions
-                if len(versions_sorted) > 1:
-                    document.add_heading('Historique des versions', level=1)
-                    for version in versions_sorted[1:]:  # Skip the latest version already shown
-                        document.add_heading(f"Version du {version.created_at}", level=2)
-                        document.add_paragraph(f"Prompt utilisé: {version.prompt_used}")
-                        
-                        # Étapes
-                        if version.steps:
-                            for step in version.steps:
-                                document.add_heading(step.step_name, level=3)
-                                document.add_paragraph(step.content or "")
-            else:
-                document.add_heading('Analyse détaillée', level=1)
-                document.add_paragraph("Aucune analyse disponible.")
-        
-        # Sauvegarder dans un buffer
-        buffer = BytesIO()
-        document.save(buffer)
-        buffer.seek(0)
-        return buffer
+    
 
-    async def generate_word_document(self, analysis_detail) -> BytesIO:
-        """
-        Génère un document Word à partir des détails d'une analyse.
-        """
-        document = Document()
-        
-        # Titre du document
-        document.add_heading(f'Analyse: {analysis_detail.filename}', 0)
-        
-        # Informations générales
-        document.add_heading('Informations générales', level=1)
-        document.add_paragraph(f"Statut: {analysis_detail.status}")
-        document.add_paragraph(f"Date de création: {analysis_detail.created_at}")
-        
-        # Transcript
-        document.add_heading('Transcription', level=1)
-        document.add_paragraph(analysis_detail.transcript)
-        
-        # Analyse détaillée
-        document.add_heading('Analyse détaillée', level=1)
-        document.add_paragraph(analysis_detail.latest_analysis)
-        
-        # Personnes impliquées
-        if analysis_detail.people_involved:
-            document.add_heading('Personnes impliquées', level=1)
-            for person in analysis_detail.people_involved:
-                document.add_paragraph(f"- {person}")
-        
-        # Plan d'action
-        if analysis_detail.action_plan:
-            document.add_heading('Plan d\'action', level=1)
-            if isinstance(analysis_detail.action_plan, list):
-                for item in analysis_detail.action_plan:
-                    document.add_paragraph(f"- {item}")
-            else:
-                document.add_paragraph(str(analysis_detail.action_plan))
-        
-        # Versions
-        if analysis_detail.versions:
-            document.add_heading('Historique des versions', level=1)
-            for version in analysis_detail.versions:
-                document.add_heading(f"Version du {version['created_at']}", level=2)
-                document.add_paragraph(f"Prompt utilisé: {version['prompt_used']}")
-                
-                # Étapes
-                if version['steps']:
-                    for step in version['steps']:
-                        document.add_heading(step['step_name'], level=3)
-                        document.add_paragraph(step['content'] or "")
-        
-        # Sauvegarder dans un buffer
-        buffer = BytesIO()
-        document.save(buffer)
-        buffer.seek(0)
-        return buffer
-
-    async def get_analysis_detail_for_export(self, analysis_id: str, user_id: int):
-        """
-        Récupère les détails d'une analyse pour l'export.
-        """
-        # Cette méthode devrait retourner un objet avec tous les détails nécessaires
-        # pour la génération du document Word
-        analysis = await self.analysis_repo.get_detailed_by_id(analysis_id)
-        if not analysis:
-            raise AnalysisNotFoundException("Analysis not found")
-        if analysis.user_id != user_id:
-            raise PermissionError("Access denied")
-            
-        # Créer un objet avec les attributs nécessaires
-        class ExportDetail:
-            pass
-            
-        export_detail = ExportDetail()
-        export_detail.id = analysis.id
-        export_detail.filename = analysis.filename
-        export_detail.status = analysis.status
-        export_detail.created_at = analysis.created_at
-        
-        # Transcript
-        export_detail.transcript = ""
-        if getattr(analysis, "transcript_blob_name", None):
-            try:
-                export_detail.transcript = await self.blob_storage_service.download_blob_as_text(analysis.transcript_blob_name)
-            except Exception:
-                export_detail.transcript = ""
-        
-        # Dernière analyse
-        export_detail.latest_analysis = ""
-        export_detail.people_involved = None
-        export_detail.action_plan = None
-        
-        # Versions triées
-        export_detail.versions = []
-        versions_sorted = sorted(analysis.versions or [], key=lambda v: v.created_at or 0, reverse=True)
-        if versions_sorted:
-            latest_version = versions_sorted[0]
-            if getattr(latest_version, "result_blob_name", None):
-                try:
-                    export_detail.latest_analysis = await self.blob_storage_service.download_blob_as_text(latest_version.result_blob_name)
-                except Exception:
-                    export_detail.latest_analysis = ""
-            export_detail.people_involved = latest_version.people_involved
-            export_detail.action_plan = latest_version.structured_plan
-        
-        # Toutes les versions
-        for v in versions_sorted:
-            steps = []
-            for sr in (v.steps or []):
-                steps.append({'step_name': sr.step_name, 'content': sr.content})
-            
-            export_detail.versions.append({
-                'created_at': v.created_at,
-                'prompt_used': v.prompt_used,
-                'steps': steps
-            })
-        
-        return export_detail
+    
 
     async def rerun_ai_analysis_step(self, step_result_id: str, new_prompt_content: str = None) -> None:
         """
         Relance une seule étape de l'analyse IA.
         """
-        # Récupérer le step_result
-        from sqlalchemy.orm import joinedload
-        from ..infrastructure import sql_models as models
-        from sqlalchemy import select
-        
-        stmt = (
-            select(models.AnalysisStepResult)
-            .options(
-                joinedload(models.AnalysisStepResult.version)
-                .joinedload(models.AnalysisVersion.analysis_record)
-                .joinedload(models.Analysis.prompt_flow)
-                .joinedload(models.PromptFlow.steps)
-            )
-            .where(models.AnalysisStepResult.id == step_result_id)
-        )
-        result = await self.analysis_repo.db.execute(stmt)
-        step_result = result.unique().scalar_one_or_none()
+        # Récupérer le step_result avec tout le contexte nécessaire
+        step_result = await self.analysis_repo.get_step_result_with_full_context(step_result_id)
         if not step_result:
             raise ValueError("Step result not found")
         
@@ -782,42 +471,113 @@ class AnalysisService:
         if not isinstance(transcript, str) or not transcript.strip():
             raise ValueError("Transcript is empty or invalid")
         
-        # Utiliser new_prompt_content s'il est fourni, sinon le prompt original
-        prompt_content = new_prompt_content
-        if not prompt_content:
-            # Trouver le prompt original pour cette étape
-            prompt_flow = analysis.prompt_flow
-            if prompt_flow and getattr(prompt_flow, "steps", None):
-                for step in prompt_flow.steps:
-                    if step.name == step_result.step_name:
-                        prompt_content = step.content
-                        break
+        # Trouver le step original
+        prompt_flow = analysis.prompt_flow
+        if not prompt_flow or not getattr(prompt_flow, "steps", None):
+            raise ValueError("No prompt flow configured for this analysis")
         
-        if not prompt_content:
-            raise ValueError("No prompt content found for this step")
+        step = None
+        for s in prompt_flow.steps:
+            if s.name == step_result.step_name:
+                step = s
+                break
         
-        # Exécuter l'analyse
+        if not step:
+            raise ValueError(f"Step '{step_result.step_name}' not found in prompt flow")
+        
+        # Si un nouveau prompt est fourni, on le met à jour temporairement
+        original_content = step.content
+        if new_prompt_content:
+            step.content = new_prompt_content
+        
         try:
-            # Mettre à jour le statut à IN_PROGRESS
-            from ..infrastructure.sql_models import AnalysisStepStatus
-            step_result.status = AnalysisStepStatus.IN_PROGRESS
-            await self.analysis_repo.db.commit()
+            # Construire le contexte pour cette étape
+            flow_context: dict[str, str] = {
+                "transcript": transcript,
+                "analysis_id": analysis.id,
+                "flow_name": prompt_flow.name,
+            }
             
-            # Exécuter le prompt
-            result_text = await self.ai_analyzer.execute_prompt(
-                system_prompt=prompt_content,
-                user_content=transcript,
-            )
-            
-            # Mettre à jour le contenu du step_result
-            step_result.content = result_text
-            step_result.status = AnalysisStepStatus.COMPLETED
-            await self.analysis_repo.db.commit()
-            
-        except Exception as e:
-            # Mettre à jour le statut à FAILED
-            from ..infrastructure.sql_models import AnalysisStepStatus
-            step_result.content = f"Step failed: {e}"
-            step_result.status = AnalysisStepStatus.FAILED
-            await self.analysis_repo.db.commit()
-            raise
+            # Exécuter l'étape en utilisant la méthode partagée
+            await self._execute_ai_step(step, step_result, transcript, flow_context)
+        finally:
+            # Restaurer le contenu original du step
+            if new_prompt_content:
+                step.content = original_content
+
+    async def get_detailed_analysis_dto(self, analysis_id: str, user_id: int):
+        """
+        Récupère les détails d'une analyse et les retourne sous forme de DTO.
+        """
+        from src.api import schemas
+        
+        a = await self.analysis_repo.get_detailed_by_id(analysis_id)
+        if not a:
+            raise AnalysisNotFoundException("Analysis not found")
+        if a.user_id != user_id:
+            raise PermissionError("Access denied")
+
+        # Sort versions by created_at desc
+        versions_sorted = sorted(a.versions or [], key=lambda v: v.created_at or 0, reverse=True)
+
+        # Read transcript content
+        transcript_content = ""
+        if getattr(a, "transcript_blob_name", None):
+            try:
+                transcript_content = await self.blob_storage_service.download_blob_as_text(a.transcript_blob_name)
+            except Exception:
+                transcript_content = ""
+
+        # Latest analysis content and people involved (keep compatibility)
+        latest_analysis_content = ""
+        people_involved = None
+        action_plan = None
+        if versions_sorted:
+            latest_version = versions_sorted[0]
+            if getattr(latest_version, "result_blob_name", None):
+                try:
+                    latest_analysis_content = await self.blob_storage_service.download_blob_as_text(latest_version.result_blob_name)
+                except Exception:
+                    latest_analysis_content = ""
+            people_involved = latest_version.people_involved
+            try:
+                if latest_version.structured_plan is not None:
+                    if isinstance(latest_version.structured_plan, dict) and "extractions" in latest_version.structured_plan:
+                        action_plan = latest_version.structured_plan.get("extractions")
+                    elif isinstance(latest_version.structured_plan, list):
+                        action_plan = latest_version.structured_plan
+                    else:
+                        action_plan = latest_version.structured_plan
+            except Exception:
+                action_plan = None
+
+        return schemas.AnalysisDetail(
+            id=a.id,
+            status=a.status,
+            created_at=a.created_at,
+            filename=a.filename,
+            prompt=None,
+            transcript=transcript_content,
+            latest_analysis=latest_analysis_content or "",
+            people_involved=people_involved,
+            action_plan=action_plan,
+            versions=[
+                schemas.AnalysisVersion(
+                    id=v.id,
+                    prompt_used=v.prompt_used,
+                    created_at=v.created_at,
+                    people_involved=v.people_involved,
+                    steps=[
+                        schemas.AnalysisStepResult(
+                            id=sr.id,
+                            step_name=sr.step_name,
+                            step_order=sr.step_order,
+                            status=str(sr.status.value) if hasattr(sr.status, "value") else str(sr.status),
+                            content=sr.content,
+                        )
+                        for sr in (v.steps or [])
+                    ],
+                )
+                for v in versions_sorted
+            ],
+        )

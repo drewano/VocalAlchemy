@@ -4,6 +4,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { LoaderCircle } from 'lucide-react'
 import * as api from '@/services/api'
+import { downloadBlobAsFile } from '@/lib/utils'
 
 interface TranscriptionTabProps {
   analysisId: string
@@ -21,18 +22,7 @@ export function TranscriptionTab({ analysisId, transcript, onTranscriptChange, o
     try {
       setIsDownloading(true)
       const blob = await api.downloadWordDocument(analysisId, 'transcription')
-      
-      // Créer un lien de téléchargement
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `transcription_${analysisId}.docx`
-      document.body.appendChild(a)
-      a.click()
-      
-      // Nettoyer
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
+      downloadBlobAsFile(blob, `transcription_${analysisId}.docx`)
     } catch (error) {
       console.error('Erreur lors du téléchargement du document Word:', error)
       // Vous pouvez ajouter une notification d'erreur ici

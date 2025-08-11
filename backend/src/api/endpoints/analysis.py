@@ -1,26 +1,31 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from pydantic import BaseModel
-from sqlalchemy import select
 from fastapi.responses import PlainTextResponse, Response
 import uuid
-from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
 from arq.connections import ArqRedis
-from src.worker.redis import get_redis_pool
 
 from src.infrastructure import sql_models as models
 from src.api import schemas
 from src.auth import get_current_user
-from src.infrastructure.database import get_async_db
-from src.infrastructure.repositories.analysis_repository import AnalysisRepository
 from src.services.analysis_service import AnalysisService, AnalysisNotFoundException
-from src.services.external_apis.azure_speech_client import AzureSpeechClient
-from src.services.external_apis.litellm_ai_processor import LiteLLMAIProcessor
+from src.services.export_service import ExportService
+from src.infrastructure.repositories.analysis_repository import AnalysisRepository
 from src.services.blob_storage_service import BlobStorageService
 from src.config import settings
+from src.api.dependencies import (
+    get_analysis_service,
+    get_analysis_repository,
+    get_blob_storage_service,
+    get_transcriber_service,
+    get_ai_analyzer,
+    get_export_service,
+    ARQ_POOL
+)
 
 router = APIRouter()
+
 class TranscriptUpdate(BaseModel):
     content: str
 
@@ -31,46 +36,7 @@ class RerunStepRequest(BaseModel):
     new_prompt_content: Optional[str] = None
 
 
-# Dependency providers (grouped at top for clarity and to avoid NameError in Depends)
-from functools import lru_cache
 
-ARQ_POOL = Depends(get_redis_pool)
-
-def get_analysis_repository(db: AsyncSession = Depends(get_async_db)) -> AnalysisRepository:
-    return AnalysisRepository(db)
-
-@lru_cache()
-def get_blob_storage_service() -> BlobStorageService:
-    return BlobStorageService(
-        storage_connection_string=settings.AZURE_STORAGE_CONNECTION_STRING,
-        storage_container_name=settings.AZURE_STORAGE_CONTAINER_NAME,
-    )
-
-@lru_cache()
-def get_transcriber(blob_storage_service: BlobStorageService = Depends(get_blob_storage_service)) -> AzureSpeechClient:
-    return AzureSpeechClient(
-        api_key=settings.AZURE_SPEECH_KEY,
-        region=settings.AZURE_SPEECH_REGION,
-        blob_storage_service=blob_storage_service,
-    )
-
-
-def get_ai_analyzer() -> LiteLLMAIProcessor:
-    return LiteLLMAIProcessor(model_name=settings.AZURE_AI_MODEL_NAME)
-
-
-def get_analysis_service(
-    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
-    transcriber: AzureSpeechClient = Depends(get_transcriber),
-    ai_analyzer: LiteLLMAIProcessor = Depends(get_ai_analyzer),
-    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
-) -> AnalysisService:
-    return AnalysisService(
-        analysis_repo,
-        transcriber=transcriber,
-        ai_analyzer=ai_analyzer,
-        blob_storage_service=blob_storage_service,
-    )
 
 @router.get("/status/{analysis_id}", response_model=schemas.AnalysisStatusResponse)
 async def get_analysis_status(
@@ -127,10 +93,18 @@ async def initiate_upload(
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
 ):
-    # 1. Generate a unique blob name
+    # 1. Validate file size
+    max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    if body.filesize > max_size_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File size exceeds the {settings.MAX_UPLOAD_SIZE_MB}MB limit."
+        )
+
+    # 2. Generate a unique blob name
     blob_name = f"{current_user.id}/{uuid.uuid4()}-{body.filename}"
 
-    # 2. Create analysis row storing the blob name
+    # 3. Create analysis row storing the blob name
     analysis = await analysis_repo.create(
         user_id=current_user.id,
         filename=body.filename,
@@ -140,7 +114,7 @@ async def initiate_upload(
 
     analysis_id = analysis.id
 
-    # 3. Generate SAS URL for upload
+    # 4. Generate SAS URL for upload
     try:
         sas_url = await blob_storage_service.get_blob_upload_sas_url(blob_name, ttl_minutes=60)
     except Exception as e:
@@ -168,26 +142,9 @@ async def finalize_upload(
     if analysis.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # 2. Ensure predefined flow exists to satisfy FK, then update prompt_flow_id
+    # 2. Update prompt_flow_id
     try:
         flow_id = body.prompt_flow_id
-        if str(flow_id).startswith("predefined_"):
-            # Create a placeholder PromptFlow row if missing (to satisfy foreign key)
-            result = await analysis_repo.db.execute(
-                select(models.PromptFlow).where(models.PromptFlow.id == flow_id)
-            )
-            flow = result.scalar_one_or_none()
-            if not flow:
-                name = str(flow_id).removeprefix("predefined_").replace("_", " ")
-                flow = models.PromptFlow(
-                    id=flow_id,
-                    name=name,
-                    description="Prompt prédéfini (virtuel)",
-                    user_id=current_user.id,
-                )
-                analysis_repo.db.add(flow)
-                await analysis_repo.db.commit()
-
         analysis.prompt_flow_id = flow_id
         await analysis_repo.db.commit()
     except Exception as e:
@@ -228,24 +185,9 @@ async def rerun_analysis(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read transcript from storage: {str(e)}")
 
-    # Update the prompt flow if provided (ensure predefined row exists for FK)
+    # Update the prompt flow if provided
     if getattr(body, "prompt_flow_id", None):
         flow_id = body.prompt_flow_id
-        if str(flow_id).startswith("predefined_"):
-            result = await analysis_repo.db.execute(
-                select(models.PromptFlow).where(models.PromptFlow.id == flow_id)
-            )
-            flow = result.scalar_one_or_none()
-            if not flow:
-                name = str(flow_id).removeprefix("predefined_").replace("_", " ")
-                flow = models.PromptFlow(
-                    id=flow_id,
-                    name=name,
-                    description="Prompt prédéfini (virtuel)",
-                    user_id=current_user.id,
-                )
-                analysis_repo.db.add(flow)
-                await analysis_repo.db.commit()
         analysis.prompt_flow_id = flow_id
         await analysis_repo.db.commit()
 
@@ -405,79 +347,14 @@ async def list_analyses(
 async def get_analysis_detail(
     analysis_id: str,
     current_user: models.User = Depends(get_current_user),
-    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
-    blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
+    analysis_service: AnalysisService = Depends(get_analysis_service),
 ) -> schemas.AnalysisDetail:
-    a = await analysis_repo.get_detailed_by_id(analysis_id)
-    if not a:
+    try:
+        return await analysis_service.get_detailed_analysis_dto(analysis_id, current_user.id)
+    except AnalysisNotFoundException:
         raise HTTPException(status_code=404, detail="Analysis not found")
-    if a.user_id != current_user.id:
+    except PermissionError:
         raise HTTPException(status_code=403, detail="Access denied")
-
-    # Sort versions by created_at desc
-    versions_sorted = sorted(a.versions or [], key=lambda v: v.created_at or 0, reverse=True)
-
-    # Read transcript content
-    transcript_content = ""
-    if getattr(a, "transcript_blob_name", None):
-        try:
-            transcript_content = await blob_storage_service.download_blob_as_text(a.transcript_blob_name)
-        except Exception:
-            transcript_content = ""
-
-    # Latest analysis content and people involved (keep compatibility)
-    latest_analysis_content = ""
-    people_involved = None
-    action_plan = None
-    if versions_sorted:
-        latest_version = versions_sorted[0]
-        if getattr(latest_version, "result_blob_name", None):
-            try:
-                latest_analysis_content = await blob_storage_service.download_blob_as_text(latest_version.result_blob_name)
-            except Exception:
-                latest_analysis_content = ""
-        people_involved = latest_version.people_involved
-        try:
-            if latest_version.structured_plan is not None:
-                if isinstance(latest_version.structured_plan, dict) and "extractions" in latest_version.structured_plan:
-                    action_plan = latest_version.structured_plan.get("extractions")
-                elif isinstance(latest_version.structured_plan, list):
-                    action_plan = latest_version.structured_plan
-                else:
-                    action_plan = latest_version.structured_plan
-        except Exception:
-            action_plan = None
-
-    return schemas.AnalysisDetail(
-        id=a.id,
-        status=a.status,
-        created_at=a.created_at,
-        filename=a.filename,
-        prompt=None,
-        transcript=transcript_content,
-        latest_analysis=latest_analysis_content or "",
-        people_involved=people_involved,
-        action_plan=action_plan,
-        versions=[
-            schemas.AnalysisVersion(
-                id=v.id,
-                prompt_used=v.prompt_used,
-                created_at=v.created_at,
-                people_involved=v.people_involved,
-                steps=[
-                    schemas.AnalysisStepResult(
-                        id=sr.id,
-                        step_name=sr.step_name,
-                        step_order=sr.step_order,
-                        status=str(sr.status.value) if hasattr(sr.status, "value") else str(sr.status),
-                        content=sr.content,
-                    )
-                    for sr in (v.steps or [])
-                ],
-            )
-            for v in versions_sorted
-        ],
-    )
 
 @router.patch("/{analysis_id}/rename", response_model=schemas.AnalysisSummary)
 async def rename_analysis(
@@ -554,18 +431,19 @@ async def rerun_step_result(
         raise HTTPException(status_code=500, detail=f"Error starting step rerun: {str(e)}")
 
 
-@router.get("/{analysis_id}/download-word")
+@router.get("/{analysis_id}/download-word", response_class=Response)
 async def download_word_document(
     analysis_id: str,
+    type: str = "assembly",  # Paramètre de requête pour le type de contenu
     current_user: models.User = Depends(get_current_user),
-    analysis_service: AnalysisService = Depends(get_analysis_service),
+    export_service: ExportService = Depends(get_export_service),
 ):
     try:
         # Get analysis detail
-        analysis_detail = await analysis_service.get_analysis_detail_for_export(analysis_id, current_user.id)
+        analysis_detail = await export_service.get_analysis_detail_for_export(analysis_id, current_user.id)
         
-        # Generate Word document
-        docx_buffer = await analysis_service.generate_word_document(analysis_detail)
+        # Generate Word document with specified content type
+        docx_buffer = await export_service.generate_word_document(analysis_detail, type)
         
         # Prepare response
         filename = f"analyse_{analysis_id}.docx"

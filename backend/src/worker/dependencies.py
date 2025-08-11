@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
-from src.config import settings
-from src.services.blob_storage_service import BlobStorageService
-from src.services.external_apis.azure_speech_client import AzureSpeechClient
-from src.services.external_apis.litellm_ai_processor import LiteLLMAIProcessor
+from src.services.shared_services import (
+    get_blob_storage_service,
+    get_transcriber as create_transcriber,
+    get_ai_analyzer
+)
 from src.services.analysis_service import AnalysisService
 from src.infrastructure.repositories.analysis_repository import AnalysisRepository
 from src.infrastructure.database import async_session_factory
@@ -11,23 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class WorkerDependencies:
     def __init__(self) -> None:
-        # Initialize Blob Storage service
-        self.blob_storage_service = BlobStorageService(
-            storage_connection_string=settings.AZURE_STORAGE_CONNECTION_STRING,
-            storage_container_name=settings.AZURE_STORAGE_CONTAINER_NAME,
-        )
-
-        # Initialize Azure Speech client with BlobStorageService
-        self.speech_client = AzureSpeechClient(
-            api_key=settings.AZURE_SPEECH_KEY,
-            region=settings.AZURE_SPEECH_REGION,
-            blob_storage_service=self.blob_storage_service,
-        )
-
-        # Initialize AI analyzer (LiteLLM)
-        self.ai_analyzer = LiteLLMAIProcessor(
-            model_name=settings.AZURE_AI_MODEL_NAME,
-        )
+        # Initialize shared services using the centralized functions
+        self.blob_storage_service = get_blob_storage_service()
+        # Passez explicitement la dépendance à la fonction `get_transcriber` refactorisée
+        self.speech_client = create_transcriber(blob_storage_service=self.blob_storage_service)
+        self.ai_analyzer = get_ai_analyzer()
 
     def create_analysis_service(self, db_session: AsyncSession) -> AnalysisService:
         """Create an AnalysisService instance with the given database session."""

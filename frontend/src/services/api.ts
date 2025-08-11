@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { PredefinedPrompts, AnalysisDetail, AnalysisListResponse, AnalysisStatusResponse } from '@/types'
+import type { AnalysisDetail, AnalysisListResponse, AnalysisStatusResponse } from '@/types'
 
 // Types locaux alignés avec AuthContext
 interface User {
@@ -45,21 +45,13 @@ api.interceptors.response.use(
 export { api }
 
 /**
- * Récupère les prompts prédéfinis depuis le backend
- * @returns Un objet contenant les prompts prédéfinis
- */
-export async function getPrompts(): Promise<PredefinedPrompts> {
-  const response = await api.get('/prompts')
-  return response.data
-}
-
-/**
  * Initie un upload de fichier audio en deux étapes
  * @param filename Le nom du fichier à uploader
+ * @param filesize La taille du fichier en octets
  * @returns Un objet contenant l'URL SAS, le nom du blob et l'ID de l'analyse
  */
-export async function initiateUpload(filename: string): Promise<{ sasUrl: string, blobName: string, analysisId: string }> {
-  const response = await api.post('/analysis/initiate-upload/', { filename })
+export async function initiateUpload(filename: string, filesize: number): Promise<{ sasUrl: string, blobName: string, analysisId: string }> {
+  const response = await api.post('/analysis/initiate-upload/', { filename, filesize })
   return {
     sasUrl: response.data.sas_url,
     blobName: response.data.blob_name,
@@ -95,17 +87,6 @@ export async function finalizeUpload(analysisId: string, promptFlowId: string): 
 
 
 
-/**
- * Récupère le fichier résultat ou transcription d'une tâche terminée
- * @param taskId L'ID de la tâche
- * @param type Le type de fichier à récupérer ('result' ou 'transcript')
- * @returns Le contenu du fichier texte
- */
-export async function getResultFile(analysisId: string, type: 'result' | 'transcript'): Promise<string> {
-  const response = await api.get(`/analysis/${type}/${analysisId}`, { responseType: 'text' })
-  return response.data
-}
-
 export async function listAnalyses({ page, pageSize }: { page: number; pageSize: number }): Promise<AnalysisListResponse> {
   const skip = Math.max(0, (page - 1) * pageSize)
   const limit = Math.max(1, pageSize)
@@ -131,11 +112,6 @@ export async function rerunAnalysis(analysisId: string, promptFlowId: string): P
     analysis_id: analysisId,
     prompt_flow_id: promptFlowId,
   })
-  return res.data
-}
-
-export async function getVersionResult(versionId: string): Promise<string> {
-  const res = await api.get(`/result/version/${versionId}`, { responseType: 'text' })
   return res.data
 }
 

@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=1440, ge=1)
 
     # Upload limits
-    MAX_UPLOAD_SIZE_MB: int = Field(default=100, ge=1, description="Maximum upload file size in megabytes")
+    MAX_UPLOAD_SIZE_MB: int = Field(default=500, ge=1, description="Maximum upload file size in megabytes")
 
     # LiteLLM debug mode: enable detailed LiteLLM logging when set to True (overridable via env var)
     LITELLM_DEBUG: bool = Field(default=False)

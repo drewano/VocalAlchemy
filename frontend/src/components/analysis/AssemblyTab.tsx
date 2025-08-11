@@ -5,6 +5,7 @@ import { Download } from 'lucide-react'
 import MarkdownDisplay from '@/components/MarkdownDisplay'
 import type { AnalysisStepResult } from '@/types'
 import * as api from '@/services/api'
+import { downloadBlobAsFile } from '@/lib/utils'
 
 interface AssemblyTabProps {
   steps: AnalysisStepResult[]
@@ -56,16 +57,7 @@ ${step.content}`)
     try {
       setIsDownloading(true)
       const blob = await api.downloadWordDocument(analysisId, 'assembly')
-      
-      // Créer une URL pour le blob et déclencher le téléchargement
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `analyse-${analysisId}.docx`
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
+      downloadBlobAsFile(blob, `analyse-${analysisId}.docx`)
     } catch (error) {
       console.error('Erreur lors du téléchargement du document Word:', error)
     } finally {

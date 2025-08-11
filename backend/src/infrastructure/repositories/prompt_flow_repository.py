@@ -9,6 +9,15 @@ from src.api import schemas
 
 
 class PromptFlowRepository(BaseRepository):
+    async def _get_with_steps(self, flow_id: str) -> Optional[models.PromptFlow]:
+        """Private method to fetch a PromptFlow with its steps loaded."""
+        result = await self.db.execute(
+            select(models.PromptFlow)
+            .options(joinedload(models.PromptFlow.steps))
+            .where(models.PromptFlow.id == flow_id)
+        )
+        return result.unique().scalar_one_or_none()
+    
     async def create(self, user_id: int, data: schemas.PromptFlowCreate) -> models.PromptFlow:
         flow = models.PromptFlow(
             name=data.name,
@@ -28,12 +37,7 @@ class PromptFlowRepository(BaseRepository):
         await self.db.commit()
         await self.db.refresh(flow)
         # Eager load steps after refresh for consistent response
-        result = await self.db.execute(
-            select(models.PromptFlow)
-            .options(joinedload(models.PromptFlow.steps))
-            .where(models.PromptFlow.id == flow.id)
-        )
-        return result.unique().scalar_one()
+        return await self._get_with_steps(flow.id)
 
     async def list_by_user(self, user_id: int) -> List[models.PromptFlow]:
         result = await self.db.execute(
@@ -45,12 +49,7 @@ class PromptFlowRepository(BaseRepository):
         return result.unique().scalars().all()
 
     async def get_by_id(self, flow_id: str) -> Optional[models.PromptFlow]:
-        result = await self.db.execute(
-            select(models.PromptFlow)
-            .options(joinedload(models.PromptFlow.steps))
-            .where(models.PromptFlow.id == flow_id)
-        )
-        return result.unique().scalar_one_or_none()
+        return await self._get_with_steps(flow_id)
 
     async def update(self, flow: models.PromptFlow, data: schemas.PromptFlowUpdate) -> models.PromptFlow:
         if data.name is not None:
@@ -73,12 +72,7 @@ class PromptFlowRepository(BaseRepository):
         await self.db.commit()
         await self.db.refresh(flow)
         # Reload with steps
-        result = await self.db.execute(
-            select(models.PromptFlow)
-            .options(joinedload(models.PromptFlow.steps))
-            .where(models.PromptFlow.id == flow.id)
-        )
-        return result.unique().scalar_one()
+        return await self._get_with_steps(flow.id)
 
     async def delete(self, flow: models.PromptFlow) -> None:
         await self.db.delete(flow)

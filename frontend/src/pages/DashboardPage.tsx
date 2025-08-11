@@ -1,71 +1,34 @@
-import React, { useContext } from 'react'
-import { useNavigate, useOutletContext } from 'react-router-dom'
-import AuthContext from '@/contexts/AuthContext'
-import { UploadForm } from '@/components/UploadForm'
+import React from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Input } from '@/components/ui/input'
-import { usePaginatedAnalysisHistory } from '@/hooks/usePaginatedAnalysisHistory'
-import { usePrompts } from '@/hooks/usePrompts'
-import { History, Search, CheckCircle2, Hourglass, XCircle } from 'lucide-react'
-import { useAnalysisSubmit } from '@/hooks/useAnalysisSubmit'
 import { Button } from '@/components/ui/button'
-import { toast } from 'sonner'
+import { usePaginatedAnalysisHistory } from '@/hooks/usePaginatedAnalysisHistory'
+import { History, CheckCircle2, Hourglass, XCircle } from 'lucide-react'
 
 const DashboardPage: React.FC = () => {
-  const { analyses: history, isLoading, refresh } = usePaginatedAnalysisHistory(10)
-  const { prompts, isLoading: isLoadingPrompts } = usePrompts()
-  const { searchTerm } = useOutletContext<any>()
-
-  const authContext = useContext(AuthContext)
+  const { analyses: history, isLoading } = usePaginatedAnalysisHistory(10)
   const navigate = useNavigate()
-  const { submitAnalysis, isSubmitting } = useAnalysisSubmit()
-
-  const handleAnalysisSubmit = async (file: File, prompt: string) => {
-    try {
-      const analysisId = await submitAnalysis(file, prompt)
-      toast.success("L'analyse a bien été lancée.")
-      refresh()
-      navigate(`/analysis/${analysisId}`)
-    } catch (error: any) {
-      toast.error("Échec de l'envoi : " + (error?.message || 'Erreur inconnue'))
-    }
-  }
-
-  if (!authContext) {
-    throw new Error('DashboardPage must be used within an AuthProvider')
-  }
-
-  const filtered = history.filter((h) =>
-    !searchTerm ? true : h.filename.toLowerCase().includes(String(searchTerm).toLowerCase())
-  )
 
   return (
     <div className="container mx-auto p-8">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-        {/* Colonne 1: Formulaire d'upload */}
+        {/* Colonne 1: Message d'invitation */}
         <div>
           <Card className="mb-8">
             <CardHeader>
               <CardTitle>Nouvelle analyse</CardTitle>
               <CardDescription>
-                Téléchargez un fichier audio pour lancer une nouvelle analyse
+                Lancez une nouvelle analyse de réunion
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {isLoading || isLoadingPrompts ? (
-                <div className="space-y-4">
-                  <Skeleton className="h-10 w-full" />
-                  <Skeleton className="h-10 w-full" />
-                  <Skeleton className="h-10 w-full" />
-                </div>
-              ) : (
-                <UploadForm
-                  prompts={prompts}
-                  onSubmit={handleAnalysisSubmit}
-                  isLoading={isSubmitting}
-                />
-              )}
+              <p className="mb-4 text-sm text-gray-600">
+                Pour démarrer une nouvelle analyse, rendez-vous sur la page "Réunions" où vous pourrez 
+                enregistrer ou importer un fichier audio.
+              </p>
+              <Button onClick={() => navigate('/meetings')} className="w-full">
+                Aller à la page Réunions
+              </Button>
             </CardContent>
           </Card>
         </div>
@@ -84,24 +47,14 @@ const DashboardPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Search input */}
-            <div className="relative mb-4">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <Input
-                value={searchTerm || ''}
-                onChange={() => { /* Read-only; provient du layout via Outlet context */ }}
-                placeholder="Rechercher..."
-                className="pl-9"
-                readOnly
-              />
-            </div>
-
             {/* List */}
-            {filtered.length === 0 ? (
-              <p className="text-sm text-gray-500">Aucun résultat pour la recherche.</p>
+            {isLoading ? (
+              <p className="text-sm text-gray-500">Chargement...</p>
+            ) : history.length === 0 ? (
+              <p className="text-sm text-gray-500">Aucune analyse trouvée.</p>
             ) : (
               <ul className="divide-y divide-gray-200">
-                {filtered.map((item) => {
+                {history.slice(0, 5).map((item) => {
                   const isCompleted = item.status === 'COMPLETED'
                   const isFailed = item.status === 'TRANSCRIPTION_FAILED' || item.status === 'ANALYSIS_FAILED'
                   const isProcessing = !isCompleted && !isFailed

@@ -162,7 +162,7 @@ const AnalysisDetailPage: React.FC = () => {
             </CardHeader>
             <CardContent>
               {analysisData.versions && analysisData.versions.length > 0 ? (
-                <AssemblyTab steps={analysisData.versions[0].steps || []} />
+                <AssemblyTab steps={analysisData.versions[0].steps || []} analysisId={analysisId} />
               ) : (
                 <div className="text-sm text-muted-foreground p-4">
                   Aucune donnée d'assemblage disponible.

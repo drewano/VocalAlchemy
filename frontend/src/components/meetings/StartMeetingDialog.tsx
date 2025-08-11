@@ -15,7 +15,7 @@ type Props = {
   onSuccess: (analysisId: string) => void
 }
 
-const MAX_FILE_BYTES = 100 * 1024 * 1024 // 100 Mo
+const MAX_FILE_BYTES = 500 * 1024 * 1024 // 500 Mo
 
 export default function StartMeetingDialog({ open, onOpenChange, onSuccess }: Props) {
   const { flows, isLoading: isLoadingPrompts, error: promptsError } = usePromptFlows()
@@ -54,7 +54,7 @@ export default function StartMeetingDialog({ open, onOpenChange, onSuccess }: Pr
       return
     }
     if (f.size > MAX_FILE_BYTES) {
-      toast.error('La taille maximale autorisée est de 100 Mo.')
+      toast.error('La taille maximale autorisée est de 500 Mo.')
       e.target.value = ''
       setFile(null)
       return
@@ -99,7 +99,7 @@ export default function StartMeetingDialog({ open, onOpenChange, onSuccess }: Pr
         <DialogHeader>
           <DialogTitle>Démarrer une réunion</DialogTitle>
           <DialogDescription>
-            Importez un fichier audio (100 Mo max) et choisissez un prompt pour lancer l'analyse.
+            Importez un fichier audio (500 Mo max) et choisissez un prompt pour lancer l'analyse.
           </DialogDescription>
         </DialogHeader>
 
@@ -142,7 +142,7 @@ export default function StartMeetingDialog({ open, onOpenChange, onSuccess }: Pr
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="audioFile">Fichier audio (100 Mo max)</Label>
+            <Label htmlFor="audioFile">Fichier audio (500 Mo max)</Label>
             <Input
               id="audioFile"
               ref={fileInputRef}
@@ -153,7 +153,7 @@ export default function StartMeetingDialog({ open, onOpenChange, onSuccess }: Pr
               aria-label="Importer un fichier audio"
               required
             />
-            <p className="text-xs text-muted-foreground">Formats audio pris en charge. Taille maximale 100 Mo.</p>
+            <p className="text-xs text-muted-foreground">Formats audio pris en charge. Taille maximale 500 Mo.</p>
           </div>
 
           <DialogFooter>

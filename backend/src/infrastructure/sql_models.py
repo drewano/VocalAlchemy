@@ -26,8 +26,6 @@ class User(Base):
 
     # Relationship
     analysis_records = relationship("Analysis", back_populates="owner_user")
-    prompts = relationship("UserPrompt", back_populates="owner_user", cascade="all, delete-orphan")
-
 
 class Analysis(Base):
     __tablename__ = "analyses"
@@ -74,19 +72,6 @@ class AnalysisVersion(Base):
         cascade="all, delete-orphan",
         order_by="AnalysisStepResult.step_order",
     )
-
-
-class UserPrompt(Base):
-    __tablename__ = "user_prompts"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, nullable=False)
-    content = Column(String, nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=sa_text('now()'), nullable=False)
-
-    # Relationship
-    owner_user = relationship("User", back_populates="prompts")
 
 
 class PromptFlow(Base):

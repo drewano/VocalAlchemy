@@ -115,3 +115,35 @@ class AnalysisRepository(BaseRepository):
             select(models.AnalysisVersion).where(models.AnalysisVersion.id == version_id)
         )
         return result.scalar_one_or_none()
+
+    async def get_step_result_by_id(self, step_result_id: str) -> Optional[models.AnalysisStepResult]:
+        result = await self.db.execute(
+            select(models.AnalysisStepResult).where(models.AnalysisStepResult.id == step_result_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_step_result_with_analysis_owner(self, step_result_id: str) -> Optional[models.AnalysisStepResult]:
+        stmt = (
+            select(models.AnalysisStepResult)
+            .options(
+                joinedload(models.AnalysisStepResult.version)
+                .joinedload(models.AnalysisVersion.analysis_record)
+            )
+            .where(models.AnalysisStepResult.id == step_result_id)
+        )
+        result = await self.db.execute(stmt)
+        return result.unique().scalar_one_or_none()
+
+    async def get_step_result_with_full_context(self, step_result_id: str) -> Optional[models.AnalysisStepResult]:
+        stmt = (
+            select(models.AnalysisStepResult)
+            .options(
+                joinedload(models.AnalysisStepResult.version)
+                .joinedload(models.AnalysisVersion.analysis_record)
+                .joinedload(models.Analysis.prompt_flow)
+                .joinedload(models.PromptFlow.steps)
+            )
+            .where(models.AnalysisStepResult.id == step_result_id)
+        )
+        result = await self.db.execute(stmt)
+        return result.unique().scalar_one_or_none()

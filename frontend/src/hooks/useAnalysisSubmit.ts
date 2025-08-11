@@ -8,7 +8,7 @@ export function useAnalysisSubmit() {
     setIsSubmitting(true)
     try {
       // Étape 1 : Initiation - Obtenir l'URL SAS et créer l'enregistrement d'analyse
-      const { sasUrl, analysisId } = await api.initiateUpload(file.name)
+      const { sasUrl, analysisId } = await api.initiateUpload(file.name, file.size)
 
       // Étape 2 : Upload direct - Envoyer le fichier vers Azure Blob Storage
       await api.uploadFileToSasUrl(sasUrl, file)

@@ -14,21 +14,6 @@ class User(BaseModel):
     class Config:
         from_attributes = True
 
-# User Prompt schemas
-class UserPromptBase(BaseModel):
-    name: str
-    content: str
-
-class UserPromptCreate(UserPromptBase):
-    pass
-
-class UserPrompt(UserPromptBase):
-    id: int
-    user_id: int
-
-    class Config:
-        from_attributes = True
-
 # Analysis Version schema
 class AnalysisStepResult(BaseModel):
     id: str
@@ -99,6 +84,7 @@ class AnalysisStatusResponse(BaseModel):
 # Upload schemas
 class InitiateUploadRequest(BaseModel):
     filename: str
+    filesize: int
 
 class InitiateUploadResponse(BaseModel):
     sas_url: str
@@ -165,3 +151,17 @@ class PromptFlow(PromptFlowBase):
 
     class Config:
         from_attributes = True
+
+
+# Export schemas
+class AnalysisStepExportDTO(BaseModel):
+    step_name: str
+    content: str
+
+
+class AnalysisExportDTO(BaseModel):
+    id: str
+    filename: str
+    status: str
+    created_at: datetime
+    steps: List[AnalysisStepExportDTO]

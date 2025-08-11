@@ -1,6 +1,6 @@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { ProfileSettings } from '@/components/settings/ProfileSettings'
-import { AppearanceSettings } from '@/components/settings/AppearanceSettings'
+import ProfileSettings from '@/components/settings/ProfileSettings'
+import AppearanceSettings from '@/components/settings/AppearanceSettings'
 
 export default function SettingsPage() {
   return (
