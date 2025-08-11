@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
 import * as api from '@/services/api'
-import type { AnalysisDetail } from '@/types'
+import type { AnalysisDetail, AnalysisStatus } from '@/types'
 
 export function useAnalysisDetail(analysisId?: string) {
   const [analysisData, setAnalysisData] = useState<AnalysisDetail | null>(null)
@@ -12,6 +12,7 @@ export function useAnalysisDetail(analysisId?: string) {
   const [error, setError] = useState<{ message: string; status: number } | null>(null)
   const [editedTranscript, setEditedTranscript] = useState<string>('')
   const [selectedFlowForRerun, setSelectedFlowForRerun] = useState<string>('')
+  const wsRef = useRef<WebSocket | null>(null)
 
   // Step 1: isolate full load in useCallback
   const load = useCallback(async () => {
@@ -37,43 +38,70 @@ export function useAnalysisDetail(analysisId?: string) {
     load()
   }, [analysisId, load])
 
-  // Step 3: lightweight polling based on status
+  // Step 3: WebSocket connection for real-time status updates
   useEffect(() => {
-    if (!analysisId || !analysisData?.status) return
+    if (!analysisId) return
 
-    const inProgressStatuses = new Set([
-      'PENDING',
-      'TRANSCRIPTION_IN_PROGRESS',
-      'ANALYSIS_PENDING',
-      'ANALYSIS_IN_PROGRESS',
-    ])
-
-    let intervalId: ReturnType<typeof setInterval> | null = null
-
-    if (inProgressStatuses.has(analysisData.status)) {
-      intervalId = setInterval(() => {
-        api
-          .checkAnalysisStatus(analysisId)
-          .then((res) => {
-            const newStatus = res.status
-            setAnalysisData((prev) => (prev ? { ...prev, status: newStatus } : prev))
-            if (!inProgressStatuses.has(newStatus)) {
-              if (intervalId) clearInterval(intervalId)
-              // Fetch full data one last time to get transcript/report
-              load()
-            }
-          })
-          .catch((e) => {
-            // surface error but do not break UI completely
-            setError(e)
-          })
-      }, 3000)
+    // Close any existing WebSocket connection
+    if (wsRef.current) {
+      wsRef.current.close()
     }
 
+    // Determine WebSocket URL
+    const wsUrl = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + 
+                  window.location.host + `/api/analysis/ws/${analysisId}`
+
+    // Create WebSocket connection
+    const ws = new WebSocket(wsUrl)
+    wsRef.current = ws
+
+    ws.onopen = () => {
+      console.log(`Connected to WebSocket for analysis ${analysisId}`)
+    }
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data)
+        const newStatus = message.status as AnalysisStatus
+        const newErrorMessage = message.error_message
+
+        // Update the analysis data with the new status
+        setAnalysisData(prev => 
+          prev ? { ...prev, status: newStatus, error_message: newErrorMessage } : null
+        )
+
+        // Terminal statuses that should trigger a full data reload
+        const terminalStatuses = new Set([
+          'COMPLETED',
+          'TRANSCRIPTION_FAILED',
+          'ANALYSIS_FAILED'
+        ])
+
+        // If we received a terminal status, reload the full data
+        if (terminalStatuses.has(newStatus)) {
+          load()
+        }
+      } catch (e) {
+        console.error('Failed to parse WebSocket message', e)
+      }
+    }
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error', error)
+      setError({ message: 'WebSocket connection error', status: 0 })
+    }
+
+    ws.onclose = () => {
+      console.log(`WebSocket connection closed for analysis ${analysisId}`)
+    }
+
+    // Cleanup function to close the WebSocket connection
     return () => {
-      if (intervalId) clearInterval(intervalId)
+      if (wsRef.current) {
+        wsRef.current.close()
+      }
     }
-  }, [analysisData?.status, analysisId, load])
+  }, [analysisId, load])
 
   const rerunAnalysis = useCallback(async () => {
     if (!analysisId || !selectedFlowForRerun) return

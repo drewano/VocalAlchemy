@@ -70,6 +70,7 @@ export interface AnalysisDetail {
   versions: AnalysisVersion[]
   people_involved: string | null
   action_plan?: ActionPlanItem[] | null
+  error_message?: string | null
 }
 
 export interface AnalysisListResponse {

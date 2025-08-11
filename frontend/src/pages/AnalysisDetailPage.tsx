@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -10,12 +10,22 @@ import { Spinner } from '@/components/ui/spinner'
 import { usePromptFlows } from '@/hooks/usePromptFlows'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import TranscriptionTab from '@/components/analysis/TranscriptionTab'
-import ResultsTab from '@/components/analysis/ResultsTab'
 import AssemblyTab from '@/components/analysis/AssemblyTab'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { LoaderCircle } from 'lucide-react'
+import StepResultItem from '@/components/analysis/StepResultItem'
+import type { AnalysisStepResult } from '@/types'
 
 const AnalysisDetailPage: React.FC = () => {
   const { analysisId } = useParams<{ analysisId: string }>()
-  usePromptFlows()
+  const { flows } = usePromptFlows()
 
   const {
     analysisData,
@@ -27,6 +37,8 @@ const AnalysisDetailPage: React.FC = () => {
     setEditedTranscript,
     saveTranscript,
     isSaving,
+    selectedFlowForRerun,
+    setSelectedFlowForRerun,
   } = useAnalysisDetail(analysisId)
 
   const scrollToRerunSection = useCallback(() => {
@@ -79,6 +91,40 @@ const AnalysisDetailPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {analysisData.status === 'ANALYSIS_FAILED' && analysisData.error_message && (
+        <Alert variant="destructive">
+          <AlertTitle>Échec de l'analyse</AlertTitle>
+          <AlertDescription>
+            <p>{analysisData.error_message}</p>
+            {analysisData.error_message.includes("No prompt flow configured") && (
+              <p className="mt-2">
+                Veuillez sélectionner un flux de prompts ci-dessous et relancer l'analyse. Vous pouvez en configurer un depuis la page <Link to="/prompts" className="underline">Prompts</Link>.
+              </p>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {analysisData.status === 'ANALYSIS_FAILED' && (
+        <div className="flex items-center gap-4 p-4 border rounded-md">
+          <label htmlFor="rerun-prompt-flow" className="text-sm font-medium">
+            Sélectionner un Prompt Flow pour relancer :
+          </label>
+          <Select onValueChange={setSelectedFlowForRerun} value={selectedFlowForRerun}>
+            <SelectTrigger id="rerun-prompt-flow" className="w-[300px]">
+              <SelectValue placeholder="Choisir un flux..." />
+            </SelectTrigger>
+            <SelectContent>
+              {flows.map((flow) => (
+                <SelectItem key={flow.id} value={flow.id}>
+                  {flow.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {/* Panneau du haut */}
       <Card>
@@ -144,14 +190,65 @@ const AnalysisDetailPage: React.FC = () => {
               <CardTitle className="text-base">Résultats par étapes</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {analysisData.versions && analysisData.versions.length > 0 && (
-                <ResultsTab
-                  steps={analysisData.versions[0].steps || []}
-                  isAnalyzing={isAnalyzing}
-                  onRerunWorkflow={rerunAnalysis}
-                  isRerunning={isRerunning}
-                />
-              )}
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Select onValueChange={setSelectedFlowForRerun} value={selectedFlowForRerun}>
+                      <SelectTrigger className="w-[200px]">
+                        <SelectValue placeholder="Sélectionner un flux" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {flows.map((flow) => (
+                          <SelectItem key={flow.id} value={flow.id}>
+                            {flow.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button 
+                    onClick={rerunAnalysis} 
+                    disabled={isRerunning || !selectedFlowForRerun}
+                    variant="outline"
+                  >
+                    {isRerunning ? (
+                      <span className="inline-flex items-center gap-2">
+                        <LoaderCircle className="h-4 w-4 animate-spin" /> Relance...
+                      </span>
+                    ) : (
+                      'Relancer l\'analyse IA'
+                    )}
+                  </Button>
+                </div>
+                
+                {isAnalyzing && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <LoaderCircle className="h-4 w-4 animate-spin" /> 
+                    L'IA analyse la transcription...
+                  </div>
+                )}
+                
+                <div className="space-y-6">
+                  {analysisData.versions && analysisData.versions.length > 0 ? (
+                    (() => {
+                      const steps: AnalysisStepResult[] = analysisData.versions[0].steps || [];
+                      return steps.length > 0 ? (
+                        steps.map((step) => (
+                          <StepResultItem key={step.id} step={step} />
+                        ))
+                      ) : (
+                        <div className="text-sm text-muted-foreground p-4 border border-dashed rounded-md">
+                          Aucune étape disponible. Les résultats des étapes apparaîtront ici une fois l'analyse terminée.
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <div className="text-sm text-muted-foreground p-4 border border-dashed rounded-md">
+                      Aucune étape disponible. Les résultats des étapes apparaîtront ici une fois l'analyse terminée.
+                    </div>
+                  )}
+                </div>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

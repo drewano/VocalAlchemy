@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { AnalysisDetail, AnalysisListResponse, AnalysisStatusResponse } from '@/types'
+import type { AnalysisDetail, AnalysisListResponse } from '@/types'
 
 // Types locaux alignés avec AuthContext
 interface User {
@@ -109,7 +109,6 @@ export async function updateStepResult(stepResultId: string, content: string): P
 
 export async function rerunAnalysis(analysisId: string, promptFlowId: string): Promise<any> {
   const res = await api.post(`/analysis/rerun/${analysisId}`, {
-    analysis_id: analysisId,
     prompt_flow_id: promptFlowId,
   })
   return res.data
@@ -119,10 +118,7 @@ export async function deleteAnalysis(analysisId: string): Promise<void> {
   await api.delete(`/analysis/${analysisId}`)
 }
 
-export async function checkAnalysisStatus(analysisId: string): Promise<AnalysisStatusResponse> {
-  const res = await api.get(`/analysis/status/${analysisId}`)
-  return res.data
-}
+
 
 export async function renameAnalysis(analysisId: string, newName: string): Promise<void> {
   await api.patch(`/analysis/${analysisId}/rename`, { filename: newName })

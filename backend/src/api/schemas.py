@@ -69,6 +69,7 @@ class AnalysisDetail(AnalysisSummary):
     versions: list[AnalysisVersion]
     people_involved: Optional[str]
     action_plan: Optional[list[ActionPlanItem]] = None
+    error_message: Optional[str] = None
 
 class AnalysisListResponse(BaseModel):
     items: list[AnalysisSummary]
@@ -93,6 +94,9 @@ class InitiateUploadResponse(BaseModel):
 
 class FinalizeUploadRequest(BaseModel):
     analysis_id: str
+    prompt_flow_id: str
+
+class RerunAnalysisRequest(BaseModel):
     prompt_flow_id: str
 
 # Token schemas

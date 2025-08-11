@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Body, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from fastapi.responses import PlainTextResponse, Response
 import uuid
 from typing import Optional
+import asyncio
 
 from arq.connections import ArqRedis
 
@@ -38,19 +39,7 @@ class RerunStepRequest(BaseModel):
 
 
 
-@router.get("/status/{analysis_id}", response_model=schemas.AnalysisStatusResponse)
-async def get_analysis_status(
-    analysis_id: str,
-    current_user: models.User = Depends(get_current_user),
-    analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
-):
-    analysis = await analysis_repo.get_by_id(analysis_id)
-    if not analysis:
-        raise HTTPException(status_code=404, detail="Analysis not found")
-    if analysis.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
 
-    return schemas.AnalysisStatusResponse(id=analysis.id, status=analysis.status)
 
 
 @router.put("/{analysis_id}/transcript")
@@ -162,7 +151,7 @@ async def finalize_upload(
 @router.post("/rerun/{analysis_id}")
 async def rerun_analysis(
     analysis_id: str,
-    body: schemas.FinalizeUploadRequest,
+    body: schemas.RerunAnalysisRequest,
     current_user: models.User = Depends(get_current_user),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
@@ -185,11 +174,10 @@ async def rerun_analysis(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read transcript from storage: {str(e)}")
 
-    # Update the prompt flow if provided
-    if getattr(body, "prompt_flow_id", None):
-        flow_id = body.prompt_flow_id
-        analysis.prompt_flow_id = flow_id
-        await analysis_repo.db.commit()
+    # Update the prompt flow
+    flow_id = body.prompt_flow_id
+    analysis.prompt_flow_id = flow_id
+    await analysis_repo.db.commit()
 
     # Update status to ANALYSIS_PENDING before enqueuing task
     await analysis_repo.update_status(analysis_id, models.AnalysisStatus.ANALYSIS_PENDING)
@@ -355,6 +343,65 @@ async def get_analysis_detail(
         raise HTTPException(status_code=404, detail="Analysis not found")
     except PermissionError:
         raise HTTPException(status_code=403, detail="Access denied")
+
+
+@router.websocket("/ws/{analysis_id}")
+async def analysis_status_ws(
+    analysis_id: str,
+    websocket: WebSocket,
+    redis: ArqRedis = ARQ_POOL,
+):
+    await websocket.accept()
+    channel_name = f"analysis:{analysis_id}:updates"
+    
+    async def sender(channel: str):
+        async with redis.pubsub() as pubsub:
+            await pubsub.subscribe(channel)
+            async for message in pubsub.listen():
+                if message and message.get('type') == 'message':
+                    await websocket.send_text(message['data'].decode('utf-8'))
+
+    async def receiver():
+        # This loop waits for a message from the client.
+        # If the client disconnects, a WebSocketDisconnect exception is raised,
+        # which will end the task.
+        try:
+            async for message in websocket.iter_text():
+                # We can ignore messages; the goal is to keep the connection alive
+                # and detect disconnection.
+                pass
+        except WebSocketDisconnect:
+            # Expected when the client disconnects
+            pass
+
+    sender_task = asyncio.create_task(sender(channel_name))
+    receiver_task = asyncio.create_task(receiver())
+    
+    try:
+        done, pending = await asyncio.wait(
+            {sender_task, receiver_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+    except WebSocketDisconnect:
+        # The client has disconnected, stop the tasks.
+        sender_task.cancel()
+        receiver_task.cancel()
+    except Exception:
+        # Handle any other exceptions that might occur
+        sender_task.cancel()
+        receiver_task.cancel()
+    finally:
+        try:
+            await websocket.close()
+        except:
+            # Ignore errors when closing, as the connection might already be closed
+            pass
 
 @router.patch("/{analysis_id}/rename", response_model=schemas.AnalysisSummary)
 async def rename_analysis(

@@ -42,7 +42,7 @@ class Analysis(Base):
     result_blob_name = Column(String, nullable=True)
     transcript_blob_name = Column(String, nullable=True)
     transcription_job_url: Mapped[str] = mapped_column(String, nullable=True)
-    prompt_flow_id: Mapped[str] = mapped_column(String, ForeignKey("prompt_flows.id"), nullable=True)
+    prompt_flow_id: Mapped[str] = mapped_column(String, ForeignKey("prompt_flows.id"), nullable=False)
     transcript_snippet: Mapped[str] = mapped_column(String(255), nullable=True)
     analysis_snippet: Mapped[str] = mapped_column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=sa_text('now()'), nullable=False)

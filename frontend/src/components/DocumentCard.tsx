@@ -10,6 +10,8 @@ import { AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader,
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
+import { getStatusProps } from '@/lib/utils'
 
 type Props = {
   analysis: AnalysisSummary
@@ -24,6 +26,8 @@ export default function DocumentCard({ analysis, onDeleteSuccess }: Props) {
   const [isRenameOpen, setIsRenameOpen] = useState(false)
   const [newFilename, setNewFilename] = useState(analysis.filename || '')
   const [isRenaming, setIsRenaming] = useState(false)
+
+  const { label, variant, icon: Icon, animated } = getStatusProps(analysis.status);
 
   const handleDelete = async () => {
     setIsDeleting(true)
@@ -59,6 +63,12 @@ export default function DocumentCard({ analysis, onDeleteSuccess }: Props) {
       <CardHeader className="border-b">
         <CardTitle className="text-base truncate" title={analysis.filename}>{analysis.filename || 'Document'}</CardTitle>
         <CardDescription>{createdLabel}</CardDescription>
+        <div className="mt-2">
+          <Badge variant={variant}>
+            <Icon className={animated ? "size-3 animate-spin" : "size-3"} />
+            <span>{label}</span>
+          </Badge>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <AudioPlayer analysisId={analysis.id} />
