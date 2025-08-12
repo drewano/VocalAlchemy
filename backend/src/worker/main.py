@@ -7,7 +7,8 @@ from datetime import timedelta
 from src.worker.tasks import (
     start_transcription_task,
     check_transcription_status_task,
-    run_ai_analysis_task,
+    setup_ai_analysis_pipeline_task,
+    run_single_ai_step_task,
     delete_analysis_task,
     rerun_ai_analysis_step_task,
     RETRY_SETTINGS,
@@ -32,7 +33,8 @@ class WorkerSettings:
     functions = [
         func(start_transcription_task, **RETRY_SETTINGS),
         func(check_transcription_status_task, **RETRY_SETTINGS),
-        func(run_ai_analysis_task, **RETRY_SETTINGS),
+        func(setup_ai_analysis_pipeline_task, **RETRY_SETTINGS),
+        func(run_single_ai_step_task, **RETRY_SETTINGS),
         func(delete_analysis_task, **RETRY_SETTINGS),
         func(rerun_ai_analysis_step_task, **RETRY_SETTINGS),
     ]

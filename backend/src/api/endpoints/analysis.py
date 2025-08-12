@@ -183,7 +183,7 @@ async def rerun_analysis(
     await analysis_repo.update_status(analysis_id, models.AnalysisStatus.ANALYSIS_PENDING)
 
     # 4. Enqueue background task to rerun analysis with existing transcript
-    await arq_pool.enqueue_job('run_ai_analysis_task', analysis_id)
+    await arq_pool.enqueue_job('setup_ai_analysis_pipeline_task', analysis_id)
 
     # 5. Return success
     return {"message": "Rerun started", "analysis_id": analysis_id}

@@ -1,6 +1,6 @@
 from typing import List, Optional
 from sqlalchemy import select, func
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from .base_repository import BaseRepository
 from .. import sql_models as models
 
@@ -138,10 +138,19 @@ class AnalysisRepository(BaseRepository):
         stmt = (
             select(models.AnalysisStepResult)
             .options(
-                joinedload(models.AnalysisStepResult.version)
-                .joinedload(models.AnalysisVersion.analysis_record)
-                .joinedload(models.Analysis.prompt_flow)
-                .joinedload(models.PromptFlow.steps)
+                # Étape 1: On charge la relation "version" depuis AnalysisStepResult
+                joinedload(models.AnalysisStepResult.version).options(
+                    # Étape 2: Depuis "version", on charge deux chemins différents
+                    
+                    # Chemin A: On charge l'enregistrement d'analyse principal et son prompt flow
+                    joinedload(models.AnalysisVersion.analysis_record)
+                    .joinedload(models.Analysis.prompt_flow)
+                    .joinedload(models.PromptFlow.steps),
+
+                    # Chemin B: On charge tous les "steps" (résultats d'étapes) associés à cette version
+                    # On utilise selectinload car c'est une relation "one-to-many"
+                    selectinload(models.AnalysisVersion.steps)
+                )
             )
             .where(models.AnalysisStepResult.id == step_result_id)
         )

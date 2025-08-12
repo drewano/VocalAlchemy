@@ -5,7 +5,6 @@ from datetime import timedelta
 from typing import Optional
 import json
 
- 
 
 # Default settings for tasks that can be retried
 RETRY_SETTINGS = {
@@ -50,7 +49,7 @@ async def check_transcription_status_task(ctx, analysis_id: str) -> None:
         try:
             status, status_resp = await service.check_transcription_status(analysis_id)
             if status == "succeeded":
-                await ctx["redis"].enqueue_job("run_ai_analysis_task", analysis_id)
+                await ctx["redis"].enqueue_job("setup_ai_analysis_pipeline_task", analysis_id)
                 # Publish status update
                 await _publish_status(ctx["redis"], analysis_id, AnalysisStatus.ANALYSIS_PENDING.value)
             elif status == "failed":
@@ -90,14 +89,26 @@ async def check_transcription_status_task(ctx, analysis_id: str) -> None:
             raise
 
 
-async def run_ai_analysis_task(ctx, analysis_id: str) -> None:
+async def setup_ai_analysis_pipeline_task(ctx, analysis_id: str) -> None:
     async with get_analysis_service_provider(ctx) as service:
         try:
+            logging.info(f"Initializing AI analysis pipeline for analysis_id: {analysis_id}")
             # Publish status update before starting analysis
             await _publish_status(ctx["redis"], analysis_id, AnalysisStatus.ANALYSIS_IN_PROGRESS.value)
-            await service.run_ai_analysis_pipeline(analysis_id)
-            # Publish status update when completed
-            await _publish_status(ctx["redis"], analysis_id, AnalysisStatus.COMPLETED.value)
+            
+            # Setup the analysis run and get the first step ID
+            first_step_id = await service.ai_pipeline_service.setup_analysis_run(analysis_id)
+            
+            # If there's a first step, enqueue it
+            if first_step_id:
+                await ctx["redis"].enqueue_job("run_single_ai_step_task", first_step_id)
+                logging.info(f"AI analysis pipeline initialized for analysis_id: {analysis_id}. First step enqueued: {first_step_id}")
+            else:
+                # No steps to execute, mark analysis as completed
+                await service.analysis_repo.update_status(analysis_id, AnalysisStatus.COMPLETED)
+                await service.analysis_repo.update_progress(analysis_id, 100)
+                await _publish_status(ctx["redis"], analysis_id, AnalysisStatus.COMPLETED.value)
+                logging.info(f"AI analysis pipeline completed for analysis_id: {analysis_id} (no steps to execute)")
         except ValueError as e:
             if "No prompt flow configured" in str(e):
                 # Handle the specific "No prompt flow configured" error
@@ -121,6 +132,31 @@ async def run_ai_analysis_task(ctx, analysis_id: str) -> None:
             logging.error(error_details)
             # Publish status update with error
             await _publish_status(ctx["redis"], analysis_id, AnalysisStatus.ANALYSIS_FAILED.value, error_details)
+            # Error handling and status updates are managed inside the service; re-raise to let ARQ handle retries/logging
+            raise
+
+
+async def run_single_ai_step_task(ctx, step_result_id: str) -> None:
+    async with get_analysis_service_provider(ctx) as service:
+        try:
+            logging.info(f"Executing AI step for step_result_id: {step_result_id}")
+            
+            # Execute the step
+            await service.ai_pipeline_service.execute_step_by_id(step_result_id)
+            
+            # Find the next step or finalize
+            next_step_id = await service.ai_pipeline_service.find_next_step_or_finalize(step_result_id)
+            
+            # If there's a next step, enqueue it
+            if next_step_id:
+                await ctx["redis"].enqueue_job("run_single_ai_step_task", next_step_id)
+            else:
+                logging.info(f"AI analysis pipeline completed for analysis associated with step {step_result_id}")
+                
+            logging.info(f"Successfully executed AI step for step_result_id: {step_result_id}")
+        except Exception as e:
+            error_details = f"AI step execution failed for step_result_id {step_result_id}. Error type: {type(e).__name__}. Details: {e}"
+            logging.error(error_details)
             # Error handling and status updates are managed inside the service; re-raise to let ARQ handle retries/logging
             raise
 
