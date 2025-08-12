@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import httpx
+from httpx import ConnectError
 from src.services.blob_storage_service import BlobStorageService
 
 
@@ -71,7 +72,10 @@ class AzureSpeechClient:
             "Ocp-Apim-Subscription-Key": self.api_key,
             "Content-Type": "application/json",
         }
-        resp = await self._http_client.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+        try:
+            resp = await self._http_client.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+        except ConnectError as e:
+            raise RuntimeError(f"Erreur de connexion réseau en tentant de soumettre la transcription: {e}") from e
         
         if resp.status_code not in [201, 202]:
             raise RuntimeError(
@@ -87,7 +91,10 @@ class AzureSpeechClient:
         if not status_url or not isinstance(status_url, str):
             raise ValueError("Invalid status_url provided")
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
-        resp = await self._http_client.get(status_url, headers=headers, timeout=30)
+        try:
+            resp = await self._http_client.get(status_url, headers=headers, timeout=30)
+        except ConnectError as e:
+            raise RuntimeError(f"Erreur de connexion réseau en tentant de vérifier le statut sur {status_url}: {e}") from e
         if resp.status_code != 200:
             raise RuntimeError(
                 f"Failed to get transcription status. status={resp.status_code}, body={resp.text}"
@@ -99,7 +106,10 @@ class AzureSpeechClient:
             raise ValueError("Invalid status_url provided")
         url = f"{status_url}/files"
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
-        resp = await self._http_client.get(url, headers=headers, timeout=30)
+        try:
+            resp = await self._http_client.get(url, headers=headers, timeout=30)
+        except ConnectError as e:
+            raise RuntimeError(f"Erreur de connexion réseau en tentant de récupérer les fichiers de transcription depuis {url}: {e}") from e
         if resp.status_code != 200:
             raise RuntimeError(
                 f"Failed to get transcription files. status={resp.status_code}, body={resp.text}"
@@ -126,7 +136,10 @@ class AzureSpeechClient:
             raise RuntimeError("No Transcription result file found in files response")
 
         # Download the result JSON
-        result_resp = await self._http_client.get(result_url, timeout=60)
+        try:
+            result_resp = await self._http_client.get(result_url, timeout=60)
+        except ConnectError as e:
+            raise RuntimeError(f"Erreur de connexion réseau en tentant de télécharger le résultat de transcription depuis {result_url}: {e}") from e
         if result_resp.status_code != 200:
             raise RuntimeError(
                 f"Failed to download result JSON. status={result_resp.status_code}, body={result_resp.text}"

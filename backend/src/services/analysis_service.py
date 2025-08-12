@@ -106,7 +106,7 @@ class AnalysisService:
             raise
         
         # Submit transcription using the new orchestrator service
-        await self.transcription_orchestrator_service.submit_transcription(analysis, normalized_blob_name)
+        await self.transcription_orchestrator_service.submit_transcription(analysis.id, normalized_blob_name)
 
     async def check_transcription_status(self, analysis_id: str) -> tuple[str, dict]:
         analysis = await self.analysis_repo.get_by_id(analysis_id)
@@ -114,7 +114,7 @@ class AnalysisService:
             raise ValueError(f"Analysis not found: {analysis_id}")
         
         # Use the new orchestrator service to check and finalize transcription
-        return await self.transcription_orchestrator_service.check_and_finalize_transcription(analysis)
+        return await self.transcription_orchestrator_service.check_and_finalize_transcription(analysis_id)
 
     
 

@@ -5,6 +5,13 @@ from datetime import timedelta
 from typing import Optional
 import json
 
+ 
+
+# Default settings for tasks that can be retried
+RETRY_SETTINGS = {
+    "max_tries": 3,
+}
+
 from src.infrastructure.sql_models import AnalysisStatus
 from src.worker.dependencies import get_analysis_service_provider
 
@@ -40,42 +47,47 @@ async def start_transcription_task(ctx, analysis_id: str) -> None:
 
 async def check_transcription_status_task(ctx, analysis_id: str) -> None:
     async with get_analysis_service_provider(ctx) as service:
-        status, status_resp = await service.check_transcription_status(analysis_id)
-        if status == "succeeded":
-            await ctx["redis"].enqueue_job("run_ai_analysis_task", analysis_id)
-            # Publish status update
-            await _publish_status(ctx["redis"], analysis_id, AnalysisStatus.ANALYSIS_PENDING.value)
-        elif status == "failed":
-            # Extract detailed error from Azure response if available
-            azure_error = (status_resp or {}).get("properties", {}).get("error", {})
-            if azure_error and isinstance(azure_error, dict):
-                code = azure_error.get("code")
-                message = azure_error.get("message")
-                details = azure_error.get("details")
-                error_str_parts = []
-                if code:
-                    error_str_parts.append(f"code={code}")
-                if message:
-                    error_str_parts.append(f"message={message}")
-                if details:
-                    error_str_parts.append(f"details={details}")
-                formatted_error = "; ".join(error_str_parts) if error_str_parts else str(azure_error)
+        try:
+            status, status_resp = await service.check_transcription_status(analysis_id)
+            if status == "succeeded":
+                await ctx["redis"].enqueue_job("run_ai_analysis_task", analysis_id)
+                # Publish status update
+                await _publish_status(ctx["redis"], analysis_id, AnalysisStatus.ANALYSIS_PENDING.value)
+            elif status == "failed":
+                # Extract detailed error from Azure response if available
+                azure_error = (status_resp or {}).get("properties", {}).get("error", {})
+                if azure_error and isinstance(azure_error, dict):
+                    code = azure_error.get("code")
+                    message = azure_error.get("message")
+                    details = azure_error.get("details")
+                    error_str_parts = []
+                    if code:
+                        error_str_parts.append(f"code={code}")
+                    if message:
+                        error_str_parts.append(f"message={message}")
+                    if details:
+                        error_str_parts.append(f"details={details}")
+                    formatted_error = "; ".join(error_str_parts) if error_str_parts else str(azure_error)
+                else:
+                    formatted_error = "Transcription failed with unknown Azure error format"
+
+                # Log full response for debugging
+                logging.error("Transcription failed for analysis %s. Full Azure response: %s", analysis_id, status_resp)
+
+                # Update status and persist error message
+                await service.analysis_repo.update_status(analysis_id, AnalysisStatus.TRANSCRIPTION_FAILED)
+                analysis = await service.analysis_repo.get_by_id(analysis_id)
+                if analysis:
+                    analysis.error_message = formatted_error
+                    await service.analysis_repo.db.commit()
+                    # Publish status update with error
+                    await _publish_status(ctx["redis"], analysis_id, AnalysisStatus.TRANSCRIPTION_FAILED.value, formatted_error)
             else:
-                formatted_error = "Transcription failed with unknown Azure error format"
-
-            # Log full response for debugging
-            logging.error("Transcription failed for analysis %s. Full Azure response: %s", analysis_id, status_resp)
-
-            # Update status and persist error message
-            await service.analysis_repo.update_status(analysis_id, AnalysisStatus.TRANSCRIPTION_FAILED)
-            analysis = await service.analysis_repo.get_by_id(analysis_id)
-            if analysis:
-                analysis.error_message = formatted_error
-                await service.analysis_repo.db.commit()
-                # Publish status update with error
-                await _publish_status(ctx["redis"], analysis_id, AnalysisStatus.TRANSCRIPTION_FAILED.value, formatted_error)
-        else:
-            await ctx["redis"].enqueue_job("check_transcription_status_task", analysis_id, _defer_by=timedelta(seconds=30))
+                await ctx["redis"].enqueue_job("check_transcription_status_task", analysis_id, _defer_by=timedelta(seconds=30))
+        except ValueError as e:
+            logging.error("Échec de la vérification du statut de transcription pour %s: %s", analysis_id, e)
+            await _publish_status(ctx["redis"], analysis_id, AnalysisStatus.TRANSCRIPTION_FAILED.value, str(e))
+            raise
 
 
 async def run_ai_analysis_task(ctx, analysis_id: str) -> None:

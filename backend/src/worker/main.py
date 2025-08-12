@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from arq import cron  # noqa: F401 (may be useful later)
+from arq import func
+from datetime import timedelta
 
 from src.worker.tasks import (
     start_transcription_task,
@@ -8,6 +10,7 @@ from src.worker.tasks import (
     run_ai_analysis_task,
     delete_analysis_task,
     rerun_ai_analysis_step_task,
+    RETRY_SETTINGS,
 )
 from src.worker.redis import get_redis_settings
 from src.infrastructure.database import engine
@@ -27,11 +30,13 @@ async def on_startup(ctx):
 
 class WorkerSettings:
     functions = [
-        start_transcription_task,
-        check_transcription_status_task,
-        run_ai_analysis_task,
-        delete_analysis_task,
-        rerun_ai_analysis_step_task,
+        func(start_transcription_task, **RETRY_SETTINGS),
+        func(check_transcription_status_task, **RETRY_SETTINGS),
+        func(run_ai_analysis_task, **RETRY_SETTINGS),
+        func(delete_analysis_task, **RETRY_SETTINGS),
+        func(rerun_ai_analysis_step_task, **RETRY_SETTINGS),
     ]
     redis_settings = get_redis_settings()
     on_startup = on_startup
+    retry_delay = timedelta(seconds=60)
+    job_timeout = 900

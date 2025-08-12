@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     AZURE_SPEECH_REGION: constr(strip_whitespace=True, min_length=1)
     AZURE_AI_API_KEY: constr(strip_whitespace=True, min_length=1)
     AZURE_AI_API_BASE: constr(strip_whitespace=True, min_length=1)
-    AZURE_AI_MODEL_NAME: str = "command-r-plus"
+    AZURE_AI_MODEL_NAME: str = "DeepSeek-V3"
 
     # Azure Blob Storage
     AZURE_STORAGE_CONNECTION_STRING: constr(strip_whitespace=True, min_length=1)

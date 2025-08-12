@@ -36,10 +36,15 @@ class TranscriptionOrchestratorService:
         self.blob_storage_service = blob_storage_service
         self.transcriber = transcriber
 
-    async def submit_transcription(self, analysis: models.Analysis, normalized_audio_blob_name: str) -> None:
+    async def submit_transcription(self, analysis_id: str, normalized_audio_blob_name: str) -> None:
         """
         Submit a transcription job for the normalized audio file.
         """
+        # Retrieve the analysis object using the ID
+        analysis = await self.analysis_repo.get_by_id(analysis_id)
+        if not analysis:
+            raise ValueError(f"Analysis not found: {analysis_id}")
+        
         # Get SAS URL for the normalized audio blob
         audio_sas_url = await self.blob_storage_service.get_blob_sas_url(normalized_audio_blob_name)
         
@@ -49,20 +54,26 @@ class TranscriptionOrchestratorService:
         # Update analysis record with job information
         analysis.transcription_job_url = status_url
         analysis.normalized_blob_name = normalized_audio_blob_name
-        try:
-            await self.analysis_repo.db.commit()
-        except Exception:
-            pass
+        await self.analysis_repo.db.commit()
 
-    async def check_and_finalize_transcription(self, analysis: models.Analysis) -> Tuple[str, Dict[Any, Any]]:
+    async def check_and_finalize_transcription(self, analysis_id: str) -> Tuple[str, Dict[Any, Any]]:
         """
         Check the status of a transcription job and finalize if completed.
         """
+        # Retrieve the analysis object using the ID
+        analysis = await self.analysis_repo.get_by_id(analysis_id)
+        if not analysis:
+            raise ValueError(f"Analysis not found: {analysis_id}")
+            
         if analysis.status != AnalysisStatus.TRANSCRIPTION_IN_PROGRESS:
             return ("running", {})
         if not analysis.transcription_job_url:
-            logging.warning("No transcription_job_url stored for analysis %s", analysis.id)
-            return ("running", {})
+            error_msg = f"L'URL du job de transcription est manquante pour l'analyse {analysis.id}. Le job n'a probablement pas pu être soumis correctement."
+            logging.error(error_msg)
+            analysis.status = AnalysisStatus.TRANSCRIPTION_FAILED
+            analysis.error_message = error_msg
+            await self.analysis_repo.db.commit()
+            raise ValueError(error_msg)
 
         status_resp = await self.transcriber.check_transcription_status(analysis.transcription_job_url)
         status = str(status_resp.get("status") or status_resp.get("statusCode")).lower()

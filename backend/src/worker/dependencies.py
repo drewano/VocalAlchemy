@@ -10,7 +10,6 @@ from src.services.transcription_orchestrator_service import TranscriptionOrchest
 from src.services.ai_pipeline_service import AIPipelineService
 from src.infrastructure.repositories.analysis_repository import AnalysisRepository
 from src.infrastructure.database import async_session_factory
-from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class WorkerDependencies:
@@ -20,37 +19,6 @@ class WorkerDependencies:
         # Passez explicitement la dépendance à la fonction `get_transcriber` refactorisée
         self.speech_client = create_transcriber(blob_storage_service=self.blob_storage_service)
         self.ai_analyzer = get_ai_analyzer()
-        
-        # Initialize new specialized services
-        self.audio_processing_service = AudioProcessingService(self.blob_storage_service)
-        self.transcription_orchestrator_service = TranscriptionOrchestratorService(
-            analysis_repo=AnalysisRepository(None),  # Temporary repo, will be replaced in create_analysis_service
-            blob_storage_service=self.blob_storage_service,
-            transcriber=self.speech_client
-        )
-        self.ai_pipeline_service = AIPipelineService(
-            analysis_repo=AnalysisRepository(None),  # Temporary repo, will be replaced in create_analysis_service
-            blob_storage_service=self.blob_storage_service,
-            ai_analyzer=self.ai_analyzer
-        )
-
-    def create_analysis_service(self, db_session: AsyncSession) -> AnalysisService:
-        """Create an AnalysisService instance with the given database session."""
-        # Instantiate AnalysisRepository with the provided db_session
-        analysis_repository = AnalysisRepository(db_session)
-        
-        # Update the specialized services with the correct repository
-        self.transcription_orchestrator_service.analysis_repo = analysis_repository
-        self.ai_pipeline_service.analysis_repo = analysis_repository
-        
-        # Instantiate AnalysisService with the new specialized services
-        return AnalysisService(
-            analysis_repo=analysis_repository,
-            audio_processing_service=self.audio_processing_service,
-            transcription_orchestrator_service=self.transcription_orchestrator_service,
-            ai_pipeline_service=self.ai_pipeline_service,
-            blob_storage_service=self.blob_storage_service,
-        )
 
 
 # Single global instance for worker processes
@@ -65,7 +33,28 @@ async def get_analysis_service_provider(ctx: dict):
     
     # Establish database session
     async with async_session_factory() as db_session:
-        # Create service instance
-        service = deps.create_analysis_service(db_session)
+        # Instantiate AnalysisRepository with the provided db_session
+        analysis_repository = AnalysisRepository(db_session)
+        
+        # Create all services with task-scoped instances
+        audio_processing_service = AudioProcessingService(deps.blob_storage_service)
+        transcription_orchestrator_service = TranscriptionOrchestratorService(
+            analysis_repo=analysis_repository,
+            blob_storage_service=deps.blob_storage_service,
+            transcriber=deps.speech_client
+        )
+        ai_pipeline_service = AIPipelineService(
+            analysis_repo=analysis_repository,
+            blob_storage_service=deps.blob_storage_service,
+            ai_analyzer=deps.ai_analyzer
+        )
+        analysis_service = AnalysisService(
+            analysis_repo=analysis_repository,
+            audio_processing_service=audio_processing_service,
+            transcription_orchestrator_service=transcription_orchestrator_service,
+            ai_pipeline_service=ai_pipeline_service,
+            blob_storage_service=deps.blob_storage_service,
+        )
+        
         # Provide service to caller
-        yield service
+        yield analysis_service
