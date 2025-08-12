@@ -1,3 +1,5 @@
+import asyncio
+import io
 import logging
 import os
 import tempfile
@@ -14,16 +16,12 @@ class AudioProcessingService:
     def __init__(self, blob_storage_service: BlobStorageService) -> None:
         self.blob_storage_service = blob_storage_service
 
-    async def normalize_audio(self, source_blob_name: str, normalized_blob_name: str) -> None:
+    def _blocking_audio_conversion(self, source_bytes: bytes) -> tuple[bytes, int]:
         """
-        Normalize audio using pydub with temporary files.
-        Converts audio to WAV (PCM s16le) 16kHz mono format.
+        Synchronous method to handle blocking file operations for audio conversion.
         """
-        source_suffix = os.path.splitext(source_blob_name)[1] or ".tmp"
-        output_suffix = ".wav"
-
-        source_temp = tempfile.NamedTemporaryFile(delete=False, suffix=source_suffix)
-        output_temp = tempfile.NamedTemporaryFile(delete=False, suffix=output_suffix)
+        source_temp = tempfile.NamedTemporaryFile(delete=False)
+        output_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         source_path = source_temp.name
         output_path = output_temp.name
         # Close immediately so we can reopen on Windows
@@ -31,10 +29,9 @@ class AudioProcessingService:
         output_temp.close()
 
         try:
-            # Download source blob to temporary file
+            # Write source bytes to temporary file
             with open(source_path, "wb") as f:
-                async for chunk in self.blob_storage_service.download_blob_as_stream(source_blob_name):
-                    f.write(chunk)
+                f.write(source_bytes)
 
             # Convert using pydub
             try:
@@ -48,12 +45,14 @@ class AudioProcessingService:
             except Exception as e:
                 raise FFmpegError(f"Audio conversion failed with pydub: {e}") from e
 
-            # Upload normalized file to blob storage
-            file_size = os.path.getsize(output_path)
+            # Read the converted file
             with open(output_path, "rb") as f:
-                await self.blob_storage_service.upload_blob_from_stream(
-                    f, normalized_blob_name, length=file_size
-                )
+                output_bytes = f.read()
+            
+            # Get file size
+            file_size = os.path.getsize(output_path)
+            
+            return output_bytes, file_size
         finally:
             # Cleanup temporary files
             for path in (source_path, output_path):
@@ -61,3 +60,22 @@ class AudioProcessingService:
                     os.remove(path)
                 except Exception:
                     pass
+
+    async def normalize_audio(self, source_blob_name: str, normalized_blob_name: str) -> None:
+        """
+        Normalize audio using pydub with temporary files.
+        Converts audio to WAV (PCM s16le) 16kHz mono format.
+        """
+        # Download source blob to bytes
+        source_data = await self.blob_storage_service.download_blob_as_bytes(source_blob_name)
+
+        # Run blocking audio conversion in a separate thread
+        converted_bytes, file_size = await asyncio.to_thread(self._blocking_audio_conversion, source_bytes=source_data)
+
+        # Prepare stream for upload
+        output_stream = io.BytesIO(converted_bytes)
+
+        # Upload result to destination blob
+        await self.blob_storage_service.upload_blob_from_stream(
+            output_stream, normalized_blob_name, length=file_size
+        )
