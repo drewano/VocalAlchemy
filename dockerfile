@@ -68,7 +68,6 @@ COPY --from=frontend-builder /app/frontend/dist /app/static
 # Exposition du port sur lequel FastAPI va écouter.
 EXPOSE 8000
 
-# Commande pour démarrer l'application avec Uvicorn.
-# --host 0.0.0.0 est nécessaire pour que le serveur soit accessible depuis l'extérieur du conteneur.
-# Les variables d'environnement (clés API, etc.) seront injectées à l'exécution.
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Utilisation de Gunicorn comme serveur de production avec des workers Uvicorn pour la compatibilité ASGI
+# Commande pour démarrer l'application avec Gunicorn.
+CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000", "src.main:app"]

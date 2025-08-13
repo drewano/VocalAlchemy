@@ -1,4 +1,4 @@
-from pydantic import Field, PostgresDsn, constr
+from pydantic import Field, PostgresDsn, constr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
     # JWT configuration
     SECRET_KEY: constr(strip_whitespace=True, min_length=1) = Field(
-        default="your_secret_key_here"
+        ..., description="JWT signing secret key (required)"
     )
     ALGORITHM: constr(strip_whitespace=True, min_length=1) = Field(default="HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=1440, ge=1)
@@ -49,6 +49,27 @@ class Settings(BaseSettings):
         default=1,
         description="Time period in minutes for rate limiting (e.g., 1 request per minute)",
     )
+
+    # CORS configuration
+    CORS_ALLOWED_ORIGINS: str = Field(
+        default="http://localhost:5173,http://localhost:8000",
+        description="Liste des origines autorisées pour le CORS, séparées par des virgules",
+    )
+
+    @field_validator("CORS_ALLOWED_ORIGINS")
+    @classmethod
+    def validate_cors_origins(cls, value: str) -> str:
+        # Normalise et vérifie l'absence de wildcard
+        if not isinstance(value, str):
+            value = str(value)
+        origins = [origin.strip() for origin in value.split(",") if origin and origin.strip()]
+        if any(origin == "*" or origin.endswith("/*") for origin in origins):
+            raise ValueError("CORS_ALLOWED_ORIGINS ne doit pas contenir '*'. Déclarez explicitement vos origines.")
+        # Recompose proprement (évite les espaces parasites)
+        return ",".join(origins)
+
+    def get_cors_allowed_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"

@@ -7,31 +7,37 @@ services:
   db:
     image: postgres:15-alpine  # Utilise une image PostgreSQL officielle et légère
     container_name: mon_projet_db
+    env_file:
+      - .env
     environment:
       # Ces variables sont utilisées par l'image Postgres pour initialiser la base.
       # Assurez-vous qu'elles correspondent à celles dans votre fichier .env !
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: dbname
     volumes:
       # Ce volume rend les données de la base de données persistantes.
       # Même si vous supprimez le conteneur, les données seront conservées.
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      # Mappe le port 5432 de votre machine au port 5432 du conteneur.
-      # Utile pour se connecter à la base depuis votre PC avec un client SQL.
-      - "5432:5432"
+    expose:
+      # Rend le port accessible aux autres services du réseau Docker uniquement (non publié vers l'hôte)
+      - "5432"
     restart: unless-stopped # Redémarre le conteneur sauf s'il a été arrêté manuellement
+    networks:
+      - internal_net
 
   # Service Redis pour la file d'attente et le cache
   redis:
     image: redis:7-alpine
     container_name: mon_projet_redis
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped
+    expose:
+      # Rend le port accessible aux autres services du réseau Docker uniquement (non publié vers l'hôte)
+      - "6379"
+    networks:
+      - internal_net
 
   # Service pour votre application (backend + frontend)
   app:
@@ -49,6 +55,10 @@ services:
       - db
       - redis
     restart: unless-stopped
+    networks:
+      # Connecté au réseau interne pour parler à db/redis, et au réseau public pour être accessible depuis l'hôte
+      - internal_net
+      - public_net
 
   # Service worker ARQ pour exécuter les tâches
   worker:
@@ -61,8 +71,19 @@ services:
       - db
       - redis
     restart: unless-stopped
+    networks:
+      - internal_net
+      - public_net
 
 # Définition des volumes nommés
 volumes:
   postgres_data: # Le volume pour les données de la base de données
   redis_data: # Le volume pour les données Redis
+
+# Définition des réseaux
+networks:
+  # Réseau interne isolé du monde extérieur
+  internal_net:
+    internal: true
+  # Réseau non-interne pour exposer l'application vers l'hôte
+  public_net:
