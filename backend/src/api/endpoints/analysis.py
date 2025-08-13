@@ -13,6 +13,7 @@ from fastapi.responses import PlainTextResponse, Response
 import uuid
 from typing import Optional
 import asyncio
+import re
 
 from arq.connections import ArqRedis
 
@@ -567,8 +568,12 @@ async def download_word_document(
         # Generate Word document with specified content type
         docx_buffer = await export_service.generate_word_document(analysis_detail, type)
 
+        # Sanitize the filename to remove invalid characters
+        safe_filename = re.sub(r'[\\/*?:"<>|]', "", analysis_detail.filename)
+        safe_filename = safe_filename.replace(" ", "_")
+        filename = f"{safe_filename}.docx"
+        
         # Prepare response
-        filename = f"analyse_{analysis_id}.docx"
         headers = {
             "Content-Disposition": f"attachment; filename={filename}",
             "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

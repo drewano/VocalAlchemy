@@ -31,6 +31,7 @@ ENV PYTHONUNBUFFERED 1
 # Installation des dépendances système.
 # ffmpeg est requis par pydub pour traiter les fichiers audio.
 # Packages additionnels requis par le SDK Azure Speech (SSL, ALSA, GStreamer pour I/O audio).
+# pandoc est requis par pypandoc pour la conversion Markdown vers Word.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ffmpeg \
@@ -41,6 +42,7 @@ RUN apt-get update \
         gstreamer1.0-libav \
         gstreamer1.0-plugins-base \
         gstreamer1.0-plugins-good \
+        pandoc \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

@@ -3,7 +3,8 @@ import React, { createContext, useState, useEffect, type ReactNode } from 'react
 interface User {
   id: number;
   email: string;
-  // Ajoutez d'autres propriétés utilisateur si nécessaire
+  is_admin: boolean;
+  status: string;
 }
 
 interface AuthContextType {

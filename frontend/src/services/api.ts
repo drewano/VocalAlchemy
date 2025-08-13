@@ -1,10 +1,12 @@
 import axios from 'axios'
-import type { AnalysisDetail, AnalysisListResponse } from '@/types'
+import type { AnalysisDetail, AnalysisListResponse, AdminUserView } from '@/types'
 
 // Types locaux alignés avec AuthContext
 interface User {
   id: number;
   email: string;
+  is_admin: boolean;
+  status: string;
 }
 
 type LoginResponse = { access_token: string; token_type: string; user: User }
@@ -43,6 +45,38 @@ api.interceptors.response.use(
 )
 
 export { api }
+
+// Setup functions
+export async function getSetupStatus(): Promise<{ admin_exists: boolean }> {
+  const response = await api.get('/setup/status')
+  return response.data
+}
+
+export async function createFirstAdmin(email: string, password: string): Promise<User> {
+  const response = await api.post('/setup/create-admin', { email, password })
+  return response.data
+}
+
+// Admin functions
+export async function listAdminUsers(): Promise<AdminUserView[]> {
+  const response = await api.get('/admin/users')
+  return response.data.users
+}
+
+export async function approveUser(userId: number): Promise<User> {
+  const response = await api.post(`/admin/users/${userId}/approve`)
+  return response.data
+}
+
+export async function rejectUser(userId: number): Promise<User> {
+  const response = await api.post(`/admin/users/${userId}/reject`)
+  return response.data
+}
+
+export async function createAdminUser(email: string, password: string): Promise<User> {
+  const response = await api.post('/admin/users', { email, password })
+  return response.data
+}
 
 /**
  * Initie un upload de fichier audio en deux étapes

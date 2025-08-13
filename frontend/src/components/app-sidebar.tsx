@@ -1,7 +1,7 @@
 import * as React from "react"
 import { useContext } from "react"
 import { Link, useLocation } from "react-router-dom"
-import { FileText, Lightbulb, Settings, PanelLeftIcon, LogOut } from "lucide-react"
+import { FileText, Lightbulb, Settings, PanelLeftIcon, LogOut, Users } from "lucide-react"
 
 import logoUrl from "@/assets/logo.svg"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -75,6 +75,21 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
                 </SidebarMenuButton>
               </SidebarMenuItem>
             ))}
+            {user?.is_admin && (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  tooltip="Administration"
+                  isActive={location.pathname === '/admin'}
+                  className="h-8 px-2 [&>svg]:size-4"
+                >
+                  <Link to="/admin">
+                    <Users />
+                    <span>Administration</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
           </SidebarMenu>
         </nav>
       </SidebarContent>

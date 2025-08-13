@@ -12,9 +12,19 @@ class UserCreate(BaseModel):
 class User(BaseModel):
     id: int
     email: str
+    is_admin: bool
+    status: str
 
     class Config:
         from_attributes = True
+
+
+class AdminUserView(User):
+    meeting_count: int
+
+
+class AdminUserListResponse(BaseModel):
+    users: List[AdminUserView]
 
 
 # Analysis Version schema
@@ -185,4 +195,6 @@ class AnalysisExportDTO(BaseModel):
     filename: str
     status: str
     created_at: datetime
+    transcript: Optional[str] = None
     steps: List[AnalysisStepExportDTO]
+    prompt_name: Optional[str] = None

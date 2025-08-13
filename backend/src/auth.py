@@ -61,6 +61,8 @@ async def authenticate_user(
         return None
     if not verify_password(password, user.hashed_password):
         return None
+    if user.status != models.UserStatus.APPROVED:
+        return None
     return user
 
 
@@ -87,3 +89,13 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+async def require_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
+    """Require admin privileges to access an endpoint."""
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administration access required"
+        )
+    return current_user

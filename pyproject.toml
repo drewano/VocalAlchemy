@@ -25,6 +25,7 @@ dependencies = [
   "arq[redis]",
   "asyncpg",
   "python-docx",
+  "pypandoc",
   "ruff",
   "slowapi"
 ]

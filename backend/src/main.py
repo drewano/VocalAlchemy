@@ -1,13 +1,17 @@
-import os
 from fastapi import (
     FastAPI,
     APIRouter,
+    Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+import os
 
 from src.api.endpoints import users, analysis
 from src.api.endpoints import prompt_flows as prompt_flows
+from src.api.endpoints import admin
+from src.api.endpoints import setup
 
 import logging
 import litellm
@@ -50,6 +54,8 @@ app.add_middleware(
 api_router = APIRouter()
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(analysis.router, prefix="/analysis", tags=["analysis"])
+api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_router.include_router(setup.router, prefix="/setup", tags=["setup"])
 
 api_router.include_router(
     prompt_flows.router, prefix="/prompt-flows", tags=["prompt-flows"]
@@ -57,26 +63,15 @@ api_router.include_router(
 
 app.include_router(api_router, prefix="/api")
 
-# Route catch-all pour servir le SPA React et les fichiers statiques
-
-
-
-@app.get("/{full_path:path}")
-async def serve_react_app(full_path: str):
-    """
-    Sert les fichiers statiques ou l'application React.
-    - Si le chemin correspond à un fichier existant dans /static, le sert.
-    - Sinon, renvoie index.html pour que React Router gère la route.
-    """
+# Route pour servir les fichiers statiques et gérer le routing React
+@app.get("/{full_path:path}", response_class=FileResponse)
+async def serve_react_app(request: Request, full_path: str):
+    # Chemin vers le fichier statique demandé
     static_file_path = os.path.join("static", full_path)
+    
+    # Si le fichier existe, le servir directement
     if os.path.isfile(static_file_path):
         return FileResponse(static_file_path)
-
-    # Si le chemin est un répertoire (ex: /), cherche index.html
-    if os.path.isdir(static_file_path):
-        index_path = os.path.join(static_file_path, "index.html")
-        if os.path.isfile(index_path):
-            return FileResponse(index_path)
-
-    # Pour toutes les autres routes, c'est le SPA qui gère
+    
+    # Pour toutes les autres routes (y compris les routes React), servir index.html
     return FileResponse("static/index.html")

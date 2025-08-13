@@ -1,5 +1,16 @@
 // Central API/Application types
 
+export interface User {
+  id: number
+  email: string
+  is_admin: boolean
+  status: string
+}
+
+export interface AdminUserView extends User {
+  meeting_count: number
+}
+
 export interface PredefinedPrompts {
   [key: string]: string
 }

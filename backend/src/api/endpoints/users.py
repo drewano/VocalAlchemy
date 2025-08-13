@@ -54,7 +54,7 @@ async def login_for_access_token(
 ):
     """Authenticate user and return JWT token along with user info."""
     user = await auth.authenticate_user(db, form_data.username, form_data.password)
-    if not user:
+    if not user or user.status != models.UserStatus.APPROVED:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",

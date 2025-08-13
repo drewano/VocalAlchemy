@@ -23,7 +23,7 @@ const SignupPage: React.FC = () => {
     try {
       await api.signup(data.email, data.password);
       // Afficher un message de succès
-      toast.success("Votre compte a été créé avec succès. Vous pouvez maintenant vous connecter.");
+      toast.success("Votre demande d'inscription a été envoyée. Un administrateur l'examinera bientôt.");
       // Succès: rediriger vers la page de connexion
       navigate('/login');
     } catch (err: any) {

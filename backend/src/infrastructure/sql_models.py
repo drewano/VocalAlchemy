@@ -7,6 +7,7 @@ from sqlalchemy import (
     Enum as SAEnum,
     Text,
     text as sa_text,
+    Boolean,
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.types import JSON
@@ -26,6 +27,12 @@ class AnalysisStatus(enum.Enum):
     ANALYSIS_FAILED = "ANALYSIS_FAILED"
 
 
+class UserStatus(enum.Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -35,9 +42,11 @@ class User(Base):
     created_at = Column(
         DateTime(timezone=True), server_default=sa_text("now()"), nullable=False
     )
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    status: Mapped[UserStatus] = mapped_column(SAEnum(UserStatus), default=UserStatus.PENDING, nullable=False)
 
     # Relationship
-    analysis_records = relationship("Analysis", back_populates="owner_user")
+    analyses = relationship("Analysis", back_populates="owner_user", cascade="all, delete-orphan", lazy="selectin")
 
 
 class Analysis(Base):
@@ -69,7 +78,7 @@ class Analysis(Base):
     )
 
     # Relationship
-    owner_user = relationship("User", back_populates="analysis_records")
+    owner_user = relationship("User", back_populates="analyses")
     versions = relationship(
         "AnalysisVersion",
         back_populates="analysis_record",
