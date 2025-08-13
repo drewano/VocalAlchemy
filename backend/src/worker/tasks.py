@@ -5,7 +5,11 @@ from datetime import timedelta
 from typing import Optional
 import json
 from src.infrastructure.sql_models import AnalysisStatus
-from src.worker.dependencies import get_analysis_service_provider
+from src.worker.dependencies import (
+    get_analysis_service_provider,
+    get_analysis_repository_provider,
+    get_transcription_orchestrator_provider,
+)
 
 # Default settings for tasks that can be retried
 RETRY_SETTINGS = {
@@ -62,9 +66,9 @@ async def start_transcription_task(ctx, analysis_id: str) -> None:
 
 
 async def check_transcription_status_task(ctx, analysis_id: str) -> None:
-    async with get_analysis_service_provider(ctx) as service:
+    async with get_transcription_orchestrator_provider(ctx) as service:
         try:
-            status, status_resp = await service.check_transcription_status(analysis_id)
+            status = await service.check_and_finalize_transcription(analysis_id)
             if status == "succeeded":
                 await ctx["redis"].enqueue_job(
                     "setup_ai_analysis_pipeline_task", analysis_id
@@ -74,52 +78,28 @@ async def check_transcription_status_task(ctx, analysis_id: str) -> None:
                     ctx["redis"], analysis_id, AnalysisStatus.ANALYSIS_PENDING.value
                 )
             elif status == "failed":
-                # Extract detailed error from Azure response if available
-                azure_error = (status_resp or {}).get("properties", {}).get("error", {})
-                if azure_error and isinstance(azure_error, dict):
-                    code = azure_error.get("code")
-                    message = azure_error.get("message")
-                    details = azure_error.get("details")
-                    error_str_parts = []
-                    if code:
-                        error_str_parts.append(f"code={code}")
-                    if message:
-                        error_str_parts.append(f"message={message}")
-                    if details:
-                        error_str_parts.append(f"details={details}")
-                    formatted_error = (
-                        "; ".join(error_str_parts)
-                        if error_str_parts
-                        else str(azure_error)
-                    )
-                else:
-                    formatted_error = (
-                        "Transcription failed with unknown Azure error format"
-                    )
-
-                # Log full response for debugging
-                logging.error(
-                    "Transcription failed for analysis %s. Full Azure response: %s",
-                    analysis_id,
-                    status_resp,
-                )
-
-                # Update status and persist error message
-                await service.analysis_repo.update_status(
-                    analysis_id, AnalysisStatus.TRANSCRIPTION_FAILED
-                )
+                # Get the updated analysis record to retrieve the error message
                 analysis = await service.analysis_repo.get_by_id(analysis_id)
-                if analysis:
-                    analysis.error_message = formatted_error
-                    await service.analysis_repo.db.commit()
-                    # Publish status update with error
-                    await _publish_status(
-                        ctx["redis"],
-                        analysis_id,
-                        AnalysisStatus.TRANSCRIPTION_FAILED.value,
-                        formatted_error,
-                    )
-            else:
+                if analysis and analysis.error_message:
+                    error_message = analysis.error_message
+                else:
+                    error_message = "Transcription failed with unknown error"
+                
+                # Log the failure
+                logging.error(
+                    "Transcription failed for analysis %s. Error: %s",
+                    analysis_id,
+                    error_message,
+                )
+                
+                # Publish status update with error
+                await _publish_status(
+                    ctx["redis"],
+                    analysis_id,
+                    AnalysisStatus.TRANSCRIPTION_FAILED.value,
+                    error_message,
+                )
+            else:  # status == "running"
                 await ctx["redis"].enqueue_job(
                     "check_transcription_status_task",
                     analysis_id,
@@ -268,3 +248,36 @@ async def rerun_ai_analysis_step_task(
         except Exception:
             # Error handling and status updates are managed inside the service; re-raise to let ARQ handle retries/logging
             raise
+
+
+async def check_stale_transcriptions_task(ctx) -> None:
+    """Vérifie et nettoie les analyses dont la transcription est bloquée depuis trop longtemps."""
+    async with get_analysis_repository_provider(ctx) as repo:
+        # Définir le seuil de timeout (2 heures)
+        timeout = timedelta(hours=2)
+        
+        # Trouver les analyses bloquées
+        stale_analyses = await repo.find_stale_in_progress_analyses(timeout_delta=timeout)
+        
+        # Itérer sur chaque analyse bloquée
+        for analysis in stale_analyses:
+            # Loguer un message d'avertissement
+            logging.warning(f"Analyse {analysis.id} bloquée en transcription. Marquage comme échouée.")
+            
+            # Définir le message d'erreur
+            error_message = "La transcription a dépassé le délai maximum et a été annulée."
+            
+            # Mettre à jour le statut de l'analyse
+            await repo.update_status(analysis.id, AnalysisStatus.TRANSCRIPTION_FAILED)
+            
+            # Mettre à jour le message d'erreur et commiter
+            analysis.error_message = error_message
+            await repo.db.commit()
+            
+            # Notifier le front-end de l'échec
+            await _publish_status(
+                ctx["redis"], 
+                analysis.id, 
+                AnalysisStatus.TRANSCRIPTION_FAILED.value, 
+                error_message
+            )

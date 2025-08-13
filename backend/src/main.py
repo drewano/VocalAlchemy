@@ -4,7 +4,7 @@ from fastapi import (
     APIRouter,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from src.api.endpoints import users, analysis
 from src.api.endpoints import prompt_flows as prompt_flows
@@ -12,6 +12,8 @@ from src.api.endpoints import prompt_flows as prompt_flows
 import logging
 import litellm
 from src.config import settings
+from src.rate_limiter import limiter
+from slowapi.errors import RateLimitExceeded
 
 
 # Configuration centralisée du logging
@@ -27,6 +29,14 @@ if settings.LITELLM_DEBUG:
     logging.info("LiteLLM verbose mode is enabled.")
 
 app = FastAPI(title="POC Audio Analysis Pipeline")
+
+# Add rate limiter to app state
+app.state.limiter = limiter
+
+# Add exception handler for rate limiting
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request, exc):
+    return PlainTextResponse(str(exc), status_code=429)
 
 app.add_middleware(
     CORSMiddleware,

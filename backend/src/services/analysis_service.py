@@ -62,9 +62,9 @@ class AnalysisService:
             raise AnalysisNotFoundException("Analysis not found")
         if analysis.user_id != user_id:
             raise PermissionError("Access denied")
-        blob_name = getattr(analysis, "source_blob_name", None)
+        blob_name = getattr(analysis, "normalized_blob_name", None)
         if not blob_name:
-            raise FileNotFoundError("No source blob available")
+            raise FileNotFoundError("No processed audio file available")
         return await self.blob_storage_service.get_blob_sas_url(blob_name)
 
     async def get_version_result_content(self, version_id: str, user_id: int) -> str:
@@ -101,6 +101,17 @@ class AnalysisService:
             await self.audio_processing_service.normalize_audio(
                 analysis.source_blob_name, normalized_blob_name
             )
+            
+            # Suppression du fichier audio original après normalisation
+            try:
+                await self.blob_storage_service.delete_blob(analysis.source_blob_name)
+            except Exception as e:
+                logging.warning(
+                    "Failed to delete original audio blob '%s' for analysis %s: %s",
+                    analysis.source_blob_name,
+                    analysis_id,
+                    e,
+                )
         except FFmpegError as e:
             logging.error(
                 "Audio normalization failed for analysis %s: %s", analysis_id, e
@@ -120,15 +131,7 @@ class AnalysisService:
             analysis.id, normalized_blob_name
         )
 
-    async def check_transcription_status(self, analysis_id: str) -> tuple[str, dict]:
-        analysis = await self.analysis_repo.get_by_id(analysis_id)
-        if not analysis:
-            raise ValueError(f"Analysis not found: {analysis_id}")
-
-        # Use the new orchestrator service to check and finalize transcription
-        return await self.transcription_orchestrator_service.check_and_finalize_transcription(
-            analysis_id
-        )
+    
 
     async def run_ai_analysis_pipeline(self, analysis_id: str) -> None:
         # Use the new AI pipeline service to run the analysis

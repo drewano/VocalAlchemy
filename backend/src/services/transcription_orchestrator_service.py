@@ -60,9 +60,10 @@ class TranscriptionOrchestratorService:
 
     async def check_and_finalize_transcription(
         self, analysis_id: str
-    ) -> Tuple[str, Dict[Any, Any]]:
+    ) -> str:
         """
         Check the status of a transcription job and finalize if completed.
+        Returns a string indicating the status: 'succeeded', 'failed', or 'running'.
         """
         # Retrieve the analysis object using the ID
         analysis = await self.analysis_repo.get_by_id(analysis_id)
@@ -70,7 +71,7 @@ class TranscriptionOrchestratorService:
             raise ValueError(f"Analysis not found: {analysis_id}")
 
         if analysis.status != AnalysisStatus.TRANSCRIPTION_IN_PROGRESS:
-            return ("running", {})
+            return "running"
         if not analysis.transcription_job_url:
             error_msg = f"L'URL du job de transcription est manquante pour l'analyse {analysis.id}. Le job n'a probablement pas pu être soumis correctement."
             logging.error(error_msg)
@@ -82,7 +83,14 @@ class TranscriptionOrchestratorService:
         status_resp = await self.transcriber.check_transcription_status(
             analysis.transcription_job_url
         )
-        status = str(status_resp.get("status") or status_resp.get("statusCode")).lower()
+        
+        # Robustly extract status from the response
+        status = status_resp.get("status")
+        if not status:
+            logging.warning(f"Unexpected status response format for analysis {analysis_id}: {status_resp}")
+            return "running"
+        status = status.lower()
+
         if status == "succeeded":
             files_response = await self.transcriber.get_transcription_files(
                 analysis.transcription_job_url
@@ -95,12 +103,39 @@ class TranscriptionOrchestratorService:
                 status=AnalysisStatus.ANALYSIS_PENDING,
                 transcript_blob_name=transcript_blob_name,
             )
-            return ("succeeded", status_resp)
+            return "succeeded"
         elif status == "failed":
             logging.error(f"Azure transcription failed. Full response: {status_resp}")
-            await self.analysis_repo.update_status(
-                analysis.id, AnalysisStatus.TRANSCRIPTION_FAILED
-            )
-            return ("failed", status_resp)
+            
+            # Extract detailed error message from Azure response
+            azure_error = status_resp.get("properties", {}).get("error", {})
+            if azure_error and isinstance(azure_error, dict):
+                code = azure_error.get("code")
+                message = azure_error.get("message")
+                details = azure_error.get("details")
+                error_str_parts = []
+                if code:
+                    error_str_parts.append(f"code={code}")
+                if message:
+                    error_str_parts.append(f"message={message}")
+                if details:
+                    error_str_parts.append(f"details={details}")
+                formatted_error = (
+                    "; ".join(error_str_parts)
+                    if error_str_parts
+                    else str(azure_error)
+                )
+            else:
+                formatted_error = "Transcription failed with unknown Azure error format"
+            
+            # Update database with error
+            analysis.status = AnalysisStatus.TRANSCRIPTION_FAILED
+            analysis.error_message = formatted_error
+            await self.analysis_repo.db.commit()
+            
+            return "failed"
+        elif status in ["running", "notstarted"]:
+            return "running"
         else:
-            return ("running", status_resp)
+            logging.warning(f"Unexpected transcription status '{status}' for analysis {analysis_id}. Treating as 'running'.")
+            return "running"

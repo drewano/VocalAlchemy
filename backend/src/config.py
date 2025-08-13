@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     # LiteLLM debug mode: enable detailed LiteLLM logging when set to True (overridable via env var)
     LITELLM_DEBUG: bool = Field(default=False)
 
+    # Rate limiting configuration
+    RATE_LIMIT_REQUESTS: int = Field(
+        default=10,
+        description="Maximum number of requests allowed per timescale for rate limiting",
+    )
+    RATE_LIMIT_TIMESCALE_MINUTES: int = Field(
+        default=1,
+        description="Time period in minutes for rate limiting (e.g., 1 request per minute)",
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )

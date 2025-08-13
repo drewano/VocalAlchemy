@@ -3,6 +3,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import joinedload, selectinload
 from .base_repository import BaseRepository
 from .. import sql_models as models
+from datetime import timedelta, datetime, timezone
 
 
 class AnalysisRepository(BaseRepository):
@@ -197,3 +198,36 @@ class AnalysisRepository(BaseRepository):
         )
         result = await self.db.execute(stmt)
         return result.unique().scalar_one_or_none()
+
+    async def get_in_progress_transcriptions(self) -> List[models.Analysis]:
+        """
+        Récupère toutes les analyses dont la transcription est en cours.
+        
+        Returns:
+            Liste des analyses avec le statut TRANSCRIPTION_IN_PROGRESS
+        """
+        stmt = select(models.Analysis).where(
+            models.Analysis.status == models.AnalysisStatus.TRANSCRIPTION_IN_PROGRESS
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
+
+    async def find_stale_in_progress_analyses(
+        self, timeout_delta: timedelta
+    ) -> List[models.Analysis]:
+        """
+        Trouve les analyses dont la transcription est bloquée (en cours depuis trop longtemps).
+        
+        Args:
+            timeout_delta: Le délai après lequel une transcription est considérée comme bloquée
+            
+        Returns:
+            Liste des analyses dont la transcription est bloquée
+        """
+        cutoff_time = datetime.now(timezone.utc) - timeout_delta
+        stmt = select(models.Analysis).where(
+            models.Analysis.status == models.AnalysisStatus.TRANSCRIPTION_IN_PROGRESS,
+            models.Analysis.created_at < cutoff_time,
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().all()

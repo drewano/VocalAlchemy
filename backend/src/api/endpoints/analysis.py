@@ -6,6 +6,7 @@ from fastapi import (
     Body,
     WebSocket,
     WebSocketDisconnect,
+    Request,
 )
 from pydantic import BaseModel
 from fastapi.responses import PlainTextResponse, Response
@@ -23,6 +24,7 @@ from src.services.export_service import ExportService
 from src.infrastructure.repositories.analysis_repository import AnalysisRepository
 from src.services.blob_storage_service import BlobStorageService
 from src.config import settings
+from src.rate_limiter import limiter
 from src.api.dependencies import (
     get_analysis_service,
     get_analysis_repository,
@@ -85,7 +87,9 @@ async def update_step_result(
 
 
 @router.post("/initiate-upload/", response_model=schemas.InitiateUploadResponse)
+@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS}/{settings.RATE_LIMIT_TIMESCALE_MINUTES}minute")
 async def initiate_upload(
+    request: Request,
     body: schemas.InitiateUploadRequest,
     current_user: models.User = Depends(get_current_user),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
@@ -129,7 +133,9 @@ async def initiate_upload(
 
 
 @router.post("/finalize-upload/")
+@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS}/{settings.RATE_LIMIT_TIMESCALE_MINUTES}minute")
 async def finalize_upload(
+    request: Request,
     body: schemas.FinalizeUploadRequest,
     current_user: models.User = Depends(get_current_user),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
@@ -166,9 +172,11 @@ async def finalize_upload(
 
 
 @router.post("/rerun/{analysis_id}")
+@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS}/{settings.RATE_LIMIT_TIMESCALE_MINUTES}minute")
 async def rerun_analysis(
     analysis_id: str,
-    body: schemas.RerunAnalysisRequest,
+    request: Request,
+    body: schemas.RerunAnalysisRequest = Body(...),
     current_user: models.User = Depends(get_current_user),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     blob_storage_service: BlobStorageService = Depends(get_blob_storage_service),
@@ -316,11 +324,25 @@ async def get_transcript(
 
 
 @router.get("/audio/{analysis_id}")
-async def get_original_audio(
+async def get_audio(
     analysis_id: str,
     current_user: models.User = Depends(get_current_user),
     analysis_service: AnalysisService = Depends(get_analysis_service),
 ):
+    """
+    Récupère l'URL SAS du fichier audio traité (normalisé) pour une analyse donnée.
+    
+    Args:
+        analysis_id (str): L'identifiant de l'analyse
+        current_user (models.User): L'utilisateur actuel (dépendance injectée)
+        analysis_service (AnalysisService): Le service d'analyse (dépendance injectée)
+        
+    Returns:
+        dict: Un dictionnaire contenant l'URL SAS du fichier audio
+        
+    Raises:
+        HTTPException: Si l'analyse n'est pas trouvée, si l'accès est refusé ou si aucun fichier audio traité n'est disponible
+    """
     try:
         sas_url = await analysis_service.get_audio_sas_url(analysis_id, current_user.id)
     except AnalysisNotFoundException:
@@ -328,7 +350,7 @@ async def get_original_audio(
     except PermissionError:
         raise HTTPException(status_code=403, detail="Access denied")
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="No source blob available")
+        raise HTTPException(status_code=404, detail="No processed audio file available")
 
     return {"url": sas_url}
 
@@ -466,8 +488,10 @@ async def rename_analysis(
 
 
 @router.post("/{analysis_id}/retranscribe")
+@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS}/{settings.RATE_LIMIT_TIMESCALE_MINUTES}minute")
 async def retranscribe_analysis(
     analysis_id: str,
+    request: Request,
     current_user: models.User = Depends(get_current_user),
     analysis_repo: AnalysisRepository = Depends(get_analysis_repository),
     arq_pool: ArqRedis = ARQ_POOL,
@@ -479,9 +503,9 @@ async def retranscribe_analysis(
     if analysis.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # 2. Update status to TRANSCRIPTION_PENDING before enqueuing task
+    # 2. Update status to TRANSCRIPTION_IN_PROGRESS before enqueuing task
     await analysis_repo.update_status(
-        analysis_id, models.AnalysisStatus.TRANSCRIPTION_PENDING
+        analysis_id, models.AnalysisStatus.TRANSCRIPTION_IN_PROGRESS
     )
 
     # 3. Enqueue transcription task
@@ -491,8 +515,10 @@ async def retranscribe_analysis(
 
 
 @router.post("/step-result/{step_result_id}/rerun")
+@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS}/{settings.RATE_LIMIT_TIMESCALE_MINUTES}minute")
 async def rerun_step_result(
     step_result_id: str,
+    request: Request,
     body: RerunStepRequest = Body(default=None),
     current_user: models.User = Depends(get_current_user),
     analysis_service: AnalysisService = Depends(get_analysis_service),

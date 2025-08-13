@@ -62,3 +62,37 @@ async def get_analysis_service_provider(ctx: dict):
 
         # Provide service to caller
         yield analysis_service
+
+
+@asynccontextmanager
+async def get_transcription_orchestrator_provider(ctx: dict):
+    """Async context manager to provide TranscriptionOrchestratorService with database session for arq tasks."""
+    # Get the dependencies instance from context
+    deps = ctx["dependencies"]
+
+    # Establish database session
+    async with async_session_factory() as db_session:
+        # Instantiate AnalysisRepository with the provided db_session
+        analysis_repository = AnalysisRepository(db_session)
+
+        # Create TranscriptionOrchestratorService with task-scoped instances
+        transcription_orchestrator_service = TranscriptionOrchestratorService(
+            analysis_repo=analysis_repository,
+            blob_storage_service=deps.blob_storage_service,
+            transcriber=deps.speech_client,
+        )
+
+        # Provide service to caller
+        yield transcription_orchestrator_service
+
+
+@asynccontextmanager
+async def get_analysis_repository_provider(ctx: dict):
+    """Async context manager to provide AnalysisRepository with database session for arq tasks."""
+    # Establish database session
+    async with async_session_factory() as db_session:
+        # Instantiate AnalysisRepository with the provided db_session
+        analysis_repository = AnalysisRepository(db_session)
+        
+        # Provide repository to caller
+        yield analysis_repository

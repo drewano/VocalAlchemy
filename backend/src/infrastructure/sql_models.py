@@ -19,9 +19,7 @@ from src.infrastructure.database import Base
 class AnalysisStatus(enum.Enum):
     PENDING = "PENDING"
     TRANSCRIPTION_IN_PROGRESS = "TRANSCRIPTION_IN_PROGRESS"
-    ANALYSIS_PENDING = (
-        "ANALYSIS_PENDING"  # Transcription terminée, en attente d'analyse
-    )
+    ANALYSIS_PENDING = "ANALYSIS_PENDING"  # Transcription terminée, en attente d'analyse
     ANALYSIS_IN_PROGRESS = "ANALYSIS_IN_PROGRESS"
     COMPLETED = "COMPLETED"
     TRANSCRIPTION_FAILED = "TRANSCRIPTION_FAILED"
@@ -62,7 +60,7 @@ class Analysis(Base):
     transcript_blob_name = Column(String, nullable=True)
     transcription_job_url: Mapped[str] = mapped_column(String, nullable=True)
     prompt_flow_id: Mapped[str] = mapped_column(
-        String, ForeignKey("prompt_flows.id"), nullable=False
+        String, ForeignKey("prompt_flows.id"), nullable=True
     )
     transcript_snippet: Mapped[str] = mapped_column(String(255), nullable=True)
     analysis_snippet: Mapped[str] = mapped_column(String(255), nullable=True)
