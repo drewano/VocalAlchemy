@@ -5,7 +5,6 @@ import type { AnalysisDetail, AnalysisStatus } from '@/types'
 export function useAnalysisDetail(analysisId?: string) {
   const [analysisData, setAnalysisData] = useState<AnalysisDetail | null>(null)
   // Removed currentAnalysis; content now comes from step results directly
-  const [currentPeople, setCurrentPeople] = useState<string>('')
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [isRerunning, setIsRerunning] = useState<boolean>(false)
   const [isSaving, setIsSaving] = useState<boolean>(false)
@@ -23,7 +22,6 @@ export function useAnalysisDetail(analysisId?: string) {
       const data = await api.getAnalysisDetail(analysisId)
       setAnalysisData(data)
       // latest_analysis is no longer primary; steps will be displayed progressively
-      setCurrentPeople(data.people_involved || 'Non spécifié')
       setEditedTranscript(data.transcript || '')
     } catch (e: any) {
       setError(e)
@@ -111,7 +109,6 @@ export function useAnalysisDetail(analysisId?: string) {
       await api.rerunAnalysis(analysisId, selectedFlowForRerun)
       const data = await api.getAnalysisDetail(analysisId)
       setAnalysisData(data)
-      setCurrentPeople(data.people_involved || 'Non spécifié')
     } catch (e: any) {
       setError(e)
       console.error('Failed to rerun analysis', e)
@@ -139,7 +136,6 @@ export function useAnalysisDetail(analysisId?: string) {
 
   return {
     analysisData,
-    currentPeople,
     isLoading,
     isRerunning,
     isSaving,

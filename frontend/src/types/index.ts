@@ -51,7 +51,6 @@ export interface AnalysisVersion {
   id: string
   prompt_used: string
   created_at: string
-  people_involved: string | null
   steps: AnalysisStepResult[]
 }
 
@@ -79,7 +78,6 @@ export interface AnalysisDetail {
   transcript: string
   latest_analysis: string | null
   versions: AnalysisVersion[]
-  people_involved: string | null
   action_plan?: ActionPlanItem[] | null
   error_message?: string | null
 }

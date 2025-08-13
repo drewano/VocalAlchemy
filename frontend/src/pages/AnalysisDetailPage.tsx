@@ -29,7 +29,6 @@ const AnalysisDetailPage: React.FC = () => {
 
   const {
     analysisData,
-    currentPeople,
     isLoading,
     isRerunning,
     rerunAnalysis,
@@ -143,14 +142,7 @@ const AnalysisDetailPage: React.FC = () => {
                 {new Date(analysisData.created_at).toLocaleString()}
               </div>
             </div>
-            <div>
-              <div className="text-sm text-muted-foreground">Personnes concernées</div>
-              {analysisData.status === 'COMPLETED' ? (
-                <div className="font-medium whitespace-pre-wrap">{currentPeople || '—'}</div>
-              ) : (
-                <div className="text-sm text-muted-foreground">Disponible après l'analyse.</div>
-              )}
-            </div>
+            
             <div className="sm:col-span-3">
               <AudioPlayer analysisId={analysisData.id} />
             </div>
