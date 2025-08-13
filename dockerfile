@@ -47,10 +47,13 @@ RUN apt-get update \
 # Définition du répertoire de travail dans l'image finale
 WORKDIR /app
 
-# Copie et installation des dépendances Python
-# On copie uniquement requirements.txt d'abord pour le cache Docker.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Installation de l'outil uv pour la gestion des dépendances Python
+RUN pip install uv
+
+# Copie et installation des dépendances Python avec uv
+# On copie uniquement pyproject.toml d'abord pour le cache Docker.
+COPY pyproject.toml .
+RUN uv pip install --system --no-cache .
 
 # Copie du code source du backend
 # On copie le dossier `src` du backend vers le dossier `/app/src` de l'image.

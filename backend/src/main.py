@@ -1,10 +1,10 @@
-
 import os
-import uuid
-from datetime import timedelta
-from fastapi import FastAPI, HTTPException, APIRouter, Depends, File, UploadFile, BackgroundTasks, Form
+from fastapi import (
+    FastAPI,
+    APIRouter,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles 
+from fastapi.responses import FileResponse
 
 from src.api.endpoints import users, analysis
 from src.api.endpoints import prompt_flows as prompt_flows
@@ -13,7 +13,6 @@ import logging
 import litellm
 from src.config import settings
 
-from src.infrastructure import sql_models as models
 
 # Configuration centralisée du logging
 logging.basicConfig(
@@ -39,15 +38,18 @@ app.add_middleware(
 
 # Utiliser un APIRouter et include_router, puis le monter avec prefix /api
 api_router = APIRouter()
-api_router.include_router(users.router, prefix="/users", tags=["users"]) 
-api_router.include_router(analysis.router, prefix="/analysis", tags=["analysis"]) 
+api_router.include_router(users.router, prefix="/users", tags=["users"])
+api_router.include_router(analysis.router, prefix="/analysis", tags=["analysis"])
 
-api_router.include_router(prompt_flows.router, prefix="/prompt-flows", tags=["prompt-flows"]) 
+api_router.include_router(
+    prompt_flows.router, prefix="/prompt-flows", tags=["prompt-flows"]
+)
 
 app.include_router(api_router, prefix="/api")
 
 # Route catch-all pour servir le SPA React et les fichiers statiques
-from fastapi.responses import FileResponse
+
+
 
 @app.get("/{full_path:path}")
 async def serve_react_app(full_path: str):

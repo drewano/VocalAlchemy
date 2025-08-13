@@ -1,4 +1,13 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum as SAEnum, Text, text as sa_text
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    DateTime,
+    ForeignKey,
+    Enum as SAEnum,
+    Text,
+    text as sa_text,
+)
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.types import JSON
 import uuid
@@ -10,11 +19,14 @@ from src.infrastructure.database import Base
 class AnalysisStatus(enum.Enum):
     PENDING = "PENDING"
     TRANSCRIPTION_IN_PROGRESS = "TRANSCRIPTION_IN_PROGRESS"
-    ANALYSIS_PENDING = "ANALYSIS_PENDING"  # Transcription terminée, en attente d'analyse
+    ANALYSIS_PENDING = (
+        "ANALYSIS_PENDING"  # Transcription terminée, en attente d'analyse
+    )
     ANALYSIS_IN_PROGRESS = "ANALYSIS_IN_PROGRESS"
     COMPLETED = "COMPLETED"
     TRANSCRIPTION_FAILED = "TRANSCRIPTION_FAILED"
     ANALYSIS_FAILED = "ANALYSIS_FAILED"
+
 
 class User(Base):
     __tablename__ = "users"
@@ -22,17 +34,24 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=sa_text('now()'), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=sa_text("now()"), nullable=False
+    )
 
     # Relationship
     analysis_records = relationship("Analysis", back_populates="owner_user")
 
+
 class Analysis(Base):
     __tablename__ = "analyses"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), nullable=False)
+    id = Column(
+        String, primary_key=True, default=lambda: str(uuid.uuid4()), nullable=False
+    )
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    status: Mapped[AnalysisStatus] = mapped_column(SAEnum(AnalysisStatus), nullable=False)
+    status: Mapped[AnalysisStatus] = mapped_column(
+        SAEnum(AnalysisStatus), nullable=False
+    )
     error_message: Mapped[str] = mapped_column(String, nullable=True)
     progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     filename = Column(String, nullable=False)
@@ -42,14 +61,22 @@ class Analysis(Base):
     result_blob_name = Column(String, nullable=True)
     transcript_blob_name = Column(String, nullable=True)
     transcription_job_url: Mapped[str] = mapped_column(String, nullable=True)
-    prompt_flow_id: Mapped[str] = mapped_column(String, ForeignKey("prompt_flows.id"), nullable=False)
+    prompt_flow_id: Mapped[str] = mapped_column(
+        String, ForeignKey("prompt_flows.id"), nullable=False
+    )
     transcript_snippet: Mapped[str] = mapped_column(String(255), nullable=True)
     analysis_snippet: Mapped[str] = mapped_column(String(255), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=sa_text('now()'), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=sa_text("now()"), nullable=False
+    )
 
     # Relationship
     owner_user = relationship("User", back_populates="analysis_records")
-    versions = relationship("AnalysisVersion", back_populates="analysis_record", cascade="all, delete-orphan")
+    versions = relationship(
+        "AnalysisVersion",
+        back_populates="analysis_record",
+        cascade="all, delete-orphan",
+    )
     prompt_flow = relationship("PromptFlow")
 
 
@@ -62,7 +89,7 @@ class AnalysisVersion(Base):
     result_blob_name = Column(String, nullable=True)
     people_involved = Column(String, nullable=True)
     structured_plan = Column(JSON, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=sa_text('now()'))
+    created_at = Column(DateTime(timezone=True), server_default=sa_text("now()"))
 
     # Relationship
     analysis_record = relationship("Analysis", back_populates="versions")
@@ -77,7 +104,9 @@ class AnalysisVersion(Base):
 class PromptFlow(Base):
     __tablename__ = "prompt_flows"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), nullable=False)
+    id = Column(
+        String, primary_key=True, default=lambda: str(uuid.uuid4()), nullable=False
+    )
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
@@ -94,7 +123,9 @@ class PromptFlow(Base):
 class PromptStep(Base):
     __tablename__ = "prompt_steps"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), nullable=False)
+    id = Column(
+        String, primary_key=True, default=lambda: str(uuid.uuid4()), nullable=False
+    )
     flow_id = Column(String, ForeignKey("prompt_flows.id"), nullable=False)
     name = Column(String, nullable=False)
     content = Column(String, nullable=False)
@@ -114,11 +145,17 @@ class AnalysisStepStatus(enum.Enum):
 class AnalysisStepResult(Base):
     __tablename__ = "analysis_step_results"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), nullable=False)
-    analysis_version_id = Column(String, ForeignKey("analysis_versions.id"), nullable=False)
+    id = Column(
+        String, primary_key=True, default=lambda: str(uuid.uuid4()), nullable=False
+    )
+    analysis_version_id = Column(
+        String, ForeignKey("analysis_versions.id"), nullable=False
+    )
     step_name = Column(String, nullable=False)
     step_order = Column(Integer, nullable=False)
-    status: Mapped[AnalysisStepStatus] = mapped_column(SAEnum(AnalysisStepStatus), nullable=False)
+    status: Mapped[AnalysisStepStatus] = mapped_column(
+        SAEnum(AnalysisStepStatus), nullable=False
+    )
     content = Column(Text, nullable=True)
 
     # Relationship

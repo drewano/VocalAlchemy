@@ -1,4 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    status,
+    Body,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel
 from fastapi.responses import PlainTextResponse, Response
 import uuid
@@ -19,27 +27,23 @@ from src.api.dependencies import (
     get_analysis_service,
     get_analysis_repository,
     get_blob_storage_service,
-    get_transcriber_service,
-    get_ai_analyzer,
     get_export_service,
-    ARQ_POOL
+    ARQ_POOL,
 )
 
 router = APIRouter()
 
+
 class TranscriptUpdate(BaseModel):
     content: str
+
 
 class StepResultUpdate(BaseModel):
     content: str
 
+
 class RerunStepRequest(BaseModel):
     new_prompt_content: Optional[str] = None
-
-
-
-
-
 
 
 @router.put("/{analysis_id}/transcript")
@@ -50,7 +54,9 @@ async def update_transcript(
     analysis_service: AnalysisService = Depends(get_analysis_service),
 ):
     try:
-        await analysis_service.overwrite_transcript_content(analysis_id, current_user.id, body.content)
+        await analysis_service.overwrite_transcript_content(
+            analysis_id, current_user.id, body.content
+        )
     except AnalysisNotFoundException:
         raise HTTPException(status_code=404, detail="Analysis not found")
     except PermissionError:
@@ -68,12 +74,15 @@ async def update_step_result(
     analysis_service: AnalysisService = Depends(get_analysis_service),
 ):
     try:
-        await analysis_service.update_step_result_content(step_result_id, current_user.id, body.content)
+        await analysis_service.update_step_result_content(
+            step_result_id, current_user.id, body.content
+        )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Access denied")
     except ValueError:
         raise HTTPException(status_code=404, detail="Step result not found")
     return {"status": "ok"}
+
 
 @router.post("/initiate-upload/", response_model=schemas.InitiateUploadResponse)
 async def initiate_upload(
@@ -87,7 +96,7 @@ async def initiate_upload(
     if body.filesize > max_size_bytes:
         raise HTTPException(
             status_code=413,
-            detail=f"File size exceeds the {settings.MAX_UPLOAD_SIZE_MB}MB limit."
+            detail=f"File size exceeds the {settings.MAX_UPLOAD_SIZE_MB}MB limit.",
         )
 
     # 2. Generate a unique blob name
@@ -105,15 +114,17 @@ async def initiate_upload(
 
     # 4. Generate SAS URL for upload
     try:
-        sas_url = await blob_storage_service.get_blob_upload_sas_url(blob_name, ttl_minutes=60)
+        sas_url = await blob_storage_service.get_blob_upload_sas_url(
+            blob_name, ttl_minutes=60
+        )
     except Exception as e:
         await analysis_repo.update_status(analysis_id, models.AnalysisStatus.FAILED)
-        raise HTTPException(status_code=500, detail=f"Error generating SAS URL: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error generating SAS URL: {str(e)}"
+        )
 
     return schemas.InitiateUploadResponse(
-        sas_url=sas_url,
-        blob_name=blob_name,
-        analysis_id=analysis_id
+        sas_url=sas_url, blob_name=blob_name, analysis_id=analysis_id
     )
 
 
@@ -137,15 +148,21 @@ async def finalize_upload(
         analysis.prompt_flow_id = flow_id
         await analysis_repo.db.commit()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error updating analysis: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error updating analysis: {str(e)}"
+        )
 
     # 3. Enqueue transcription task
     try:
-        await arq_pool.enqueue_job('start_transcription_task', body.analysis_id)
+        await arq_pool.enqueue_job("start_transcription_task", body.analysis_id)
         return {"status": "processing_started"}
     except Exception as e:
-        await analysis_repo.update_status(body.analysis_id, models.AnalysisStatus.FAILED)
-        raise HTTPException(status_code=500, detail=f"Error starting transcription: {str(e)}")
+        await analysis_repo.update_status(
+            body.analysis_id, models.AnalysisStatus.FAILED
+        )
+        raise HTTPException(
+            status_code=500, detail=f"Error starting transcription: {str(e)}"
+        )
 
 
 @router.post("/rerun/{analysis_id}")
@@ -166,13 +183,19 @@ async def rerun_analysis(
 
     # 2. Ensure transcript blob exists
     if not analysis.transcript_blob_name:
-        raise HTTPException(status_code=404, detail="Transcript not available for rerun")
+        raise HTTPException(
+            status_code=404, detail="Transcript not available for rerun"
+        )
 
     # 3. Read transcript content from blob storage (validate accessibility)
     try:
-        _ = await blob_storage_service.download_blob_as_text(analysis.transcript_blob_name)
+        _ = await blob_storage_service.download_blob_as_text(
+            analysis.transcript_blob_name
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read transcript from storage: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to read transcript from storage: {str(e)}"
+        )
 
     # Update the prompt flow
     flow_id = body.prompt_flow_id
@@ -180,10 +203,12 @@ async def rerun_analysis(
     await analysis_repo.db.commit()
 
     # Update status to ANALYSIS_PENDING before enqueuing task
-    await analysis_repo.update_status(analysis_id, models.AnalysisStatus.ANALYSIS_PENDING)
+    await analysis_repo.update_status(
+        analysis_id, models.AnalysisStatus.ANALYSIS_PENDING
+    )
 
     # 4. Enqueue background task to rerun analysis with existing transcript
-    await arq_pool.enqueue_job('setup_ai_analysis_pipeline_task', analysis_id)
+    await arq_pool.enqueue_job("setup_ai_analysis_pipeline_task", analysis_id)
 
     # 5. Return success
     return {"message": "Rerun started", "analysis_id": analysis_id}
@@ -210,11 +235,8 @@ async def delete_analysis(
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Enqueue deletion task
-    await arq_pool.enqueue_job('delete_analysis_task', analysis_id, current_user.id)
+    await arq_pool.enqueue_job("delete_analysis_task", analysis_id, current_user.id)
     return
-
-
-
 
 
 @router.get("/result/{analysis_id}")
@@ -224,7 +246,9 @@ async def get_result(
     analysis_service: AnalysisService = Depends(get_analysis_service),
 ):
     try:
-        content = await analysis_service.get_result_content(analysis_id, current_user.id)
+        content = await analysis_service.get_result_content(
+            analysis_id, current_user.id
+        )
     except AnalysisNotFoundException:
         raise HTTPException(status_code=404, detail="Analysis not found")
     except PermissionError:
@@ -234,7 +258,9 @@ async def get_result(
     except ValueError:
         raise HTTPException(status_code=422, detail="Task not completed yet")
     except Exception:
-        raise HTTPException(status_code=404, detail="Failed to read result from storage")
+        raise HTTPException(
+            status_code=404, detail="Failed to read result from storage"
+        )
 
     return PlainTextResponse(content)
 
@@ -246,7 +272,9 @@ async def get_version_result(
     analysis_service: AnalysisService = Depends(get_analysis_service),
 ):
     try:
-        content = await analysis_service.get_version_result_content(version_id, current_user.id)
+        content = await analysis_service.get_version_result_content(
+            version_id, current_user.id
+        )
     except AnalysisNotFoundException:
         raise HTTPException(status_code=404, detail="Version not found")
     except PermissionError:
@@ -254,7 +282,9 @@ async def get_version_result(
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Version result not found")
     except Exception:
-        raise HTTPException(status_code=500, detail="Failed to read version result from storage")
+        raise HTTPException(
+            status_code=500, detail="Failed to read version result from storage"
+        )
 
     return PlainTextResponse(content)
 
@@ -266,7 +296,9 @@ async def get_transcript(
     analysis_service: AnalysisService = Depends(get_analysis_service),
 ):
     try:
-        content = await analysis_service.get_transcript_content(analysis_id, current_user.id)
+        content = await analysis_service.get_transcript_content(
+            analysis_id, current_user.id
+        )
     except AnalysisNotFoundException:
         raise HTTPException(status_code=404, detail="Analysis not found")
     except PermissionError:
@@ -276,7 +308,9 @@ async def get_transcript(
     except ValueError:
         raise HTTPException(status_code=422, detail="Task not completed yet")
     except Exception:
-        raise HTTPException(status_code=404, detail="Failed to read transcript from storage")
+        raise HTTPException(
+            status_code=404, detail="Failed to read transcript from storage"
+        )
 
     return PlainTextResponse(content)
 
@@ -338,7 +372,9 @@ async def get_analysis_detail(
     analysis_service: AnalysisService = Depends(get_analysis_service),
 ) -> schemas.AnalysisDetail:
     try:
-        return await analysis_service.get_detailed_analysis_dto(analysis_id, current_user.id)
+        return await analysis_service.get_detailed_analysis_dto(
+            analysis_id, current_user.id
+        )
     except AnalysisNotFoundException:
         raise HTTPException(status_code=404, detail="Analysis not found")
     except PermissionError:
@@ -353,13 +389,13 @@ async def analysis_status_ws(
 ):
     await websocket.accept()
     channel_name = f"analysis:{analysis_id}:updates"
-    
+
     async def sender(channel: str):
         async with redis.pubsub() as pubsub:
             await pubsub.subscribe(channel)
             async for message in pubsub.listen():
-                if message and message.get('type') == 'message':
-                    await websocket.send_text(message['data'].decode('utf-8'))
+                if message and message.get("type") == "message":
+                    await websocket.send_text(message["data"].decode("utf-8"))
 
     async def receiver():
         # This loop waits for a message from the client.
@@ -376,7 +412,7 @@ async def analysis_status_ws(
 
     sender_task = asyncio.create_task(sender(channel_name))
     receiver_task = asyncio.create_task(receiver())
-    
+
     try:
         done, pending = await asyncio.wait(
             {sender_task, receiver_task},
@@ -402,6 +438,7 @@ async def analysis_status_ws(
         except:
             # Ignore errors when closing, as the connection might already be closed
             pass
+
 
 @router.patch("/{analysis_id}/rename", response_model=schemas.AnalysisSummary)
 async def rename_analysis(
@@ -443,10 +480,12 @@ async def retranscribe_analysis(
         raise HTTPException(status_code=403, detail="Access denied")
 
     # 2. Update status to TRANSCRIPTION_PENDING before enqueuing task
-    await analysis_repo.update_status(analysis_id, models.AnalysisStatus.TRANSCRIPTION_PENDING)
+    await analysis_repo.update_status(
+        analysis_id, models.AnalysisStatus.TRANSCRIPTION_PENDING
+    )
 
     # 3. Enqueue transcription task
-    await arq_pool.enqueue_job('start_transcription_task', analysis_id)
+    await arq_pool.enqueue_job("start_transcription_task", analysis_id)
 
     return {"message": "Retranscription started", "analysis_id": analysis_id}
 
@@ -461,21 +500,29 @@ async def rerun_step_result(
 ):
     try:
         # Validate step result ownership through analysis
-        step_result = await analysis_service.analysis_repo.get_step_result_by_id(step_result_id)
+        step_result = await analysis_service.analysis_repo.get_step_result_by_id(
+            step_result_id
+        )
         if not step_result:
             raise HTTPException(status_code=404, detail="Step result not found")
-        
-        analysis = await analysis_service.analysis_repo.get_by_id(step_result.analysis_version.analysis_id)
+
+        analysis = await analysis_service.analysis_repo.get_by_id(
+            step_result.analysis_version.analysis_id
+        )
         if not analysis or analysis.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="Access denied")
-            
+
         # Enqueue rerun task
         new_prompt_content = body.new_prompt_content if body else None
-        await arq_pool.enqueue_job('rerun_ai_analysis_step_task', step_result_id, new_prompt_content)
-        
+        await arq_pool.enqueue_job(
+            "rerun_ai_analysis_step_task", step_result_id, new_prompt_content
+        )
+
         return {"message": "Step rerun started", "step_result_id": step_result_id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error starting step rerun: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error starting step rerun: {str(e)}"
+        )
 
 
 @router.get("/{analysis_id}/download-word", response_class=Response)
@@ -487,22 +534,30 @@ async def download_word_document(
 ):
     try:
         # Get analysis detail
-        analysis_detail = await export_service.get_analysis_detail_for_export(analysis_id, current_user.id)
-        
+        analysis_detail = await export_service.get_analysis_detail_for_export(
+            analysis_id, current_user.id
+        )
+
         # Generate Word document with specified content type
         docx_buffer = await export_service.generate_word_document(analysis_detail, type)
-        
+
         # Prepare response
         filename = f"analyse_{analysis_id}.docx"
         headers = {
             "Content-Disposition": f"attachment; filename={filename}",
             "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         }
-        
-        return Response(content=docx_buffer.getvalue(), headers=headers, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+        return Response(
+            content=docx_buffer.getvalue(),
+            headers=headers,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
     except AnalysisNotFoundException:
         raise HTTPException(status_code=404, detail="Analysis not found")
     except PermissionError:
         raise HTTPException(status_code=403, detail="Access denied")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating Word document: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error generating Word document: {str(e)}"
+        )

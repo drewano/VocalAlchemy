@@ -19,5 +19,9 @@ def get_redis_settings() -> RedisSettings:
     Get and return RedisSettings configuration object.
     Uses REDIS_URL from settings if provided, otherwise uses default RedisSettings.
     """
-    redis_settings = RedisSettings.from_dsn(settings.REDIS_URL) if settings.REDIS_URL else RedisSettings()
+    redis_settings = (
+        RedisSettings.from_dsn(settings.REDIS_URL)
+        if settings.REDIS_URL
+        else RedisSettings()
+    )
     return redis_settings

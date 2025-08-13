@@ -2,10 +2,12 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional, List
 
+
 # User schemas
 class UserCreate(BaseModel):
     email: str
     password: str
+
 
 class User(BaseModel):
     id: int
@@ -13,6 +15,7 @@ class User(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 # Analysis Version schema
 class AnalysisStepResult(BaseModel):
@@ -36,6 +39,7 @@ class AnalysisVersion(BaseModel):
     class Config:
         from_attributes = True
 
+
 # Action Plan schemas
 class ActionPlanItemAttributes(BaseModel):
     topic: Optional[str] = None
@@ -44,11 +48,13 @@ class ActionPlanItemAttributes(BaseModel):
     participants: Optional[list[str]] = None
     deadline: Optional[str] = None
 
+
 class ActionPlanItem(BaseModel):
     extraction_class: str
     extraction_text: str
     attributes: ActionPlanItemAttributes
     char_interval: Optional[dict] = None
+
 
 # Analysis schemas
 class AnalysisSummary(BaseModel):
@@ -62,6 +68,7 @@ class AnalysisSummary(BaseModel):
     class Config:
         from_attributes = True
 
+
 class AnalysisDetail(AnalysisSummary):
     prompt: Optional[str]
     transcript: str
@@ -71,33 +78,41 @@ class AnalysisDetail(AnalysisSummary):
     action_plan: Optional[list[ActionPlanItem]] = None
     error_message: Optional[str] = None
 
+
 class AnalysisListResponse(BaseModel):
     items: list[AnalysisSummary]
     total: int
 
+
 class AnalysisRename(BaseModel):
     filename: str
+
 
 class AnalysisStatusResponse(BaseModel):
     id: str
     status: str
+
 
 # Upload schemas
 class InitiateUploadRequest(BaseModel):
     filename: str
     filesize: int
 
+
 class InitiateUploadResponse(BaseModel):
     sas_url: str
     blob_name: str
     analysis_id: str
 
+
 class FinalizeUploadRequest(BaseModel):
     analysis_id: str
     prompt_flow_id: str
 
+
 class RerunAnalysisRequest(BaseModel):
     prompt_flow_id: str
+
 
 # Token schemas
 class Token(BaseModel):
@@ -105,11 +120,13 @@ class Token(BaseModel):
     token_type: str
     user: User
 
+
 class TokenData(BaseModel):
     email: Optional[str] = None
 
 
 # Prompt Flow & Steps schemas
+
 
 class PromptStepBase(BaseModel):
     name: str

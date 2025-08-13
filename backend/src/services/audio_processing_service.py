@@ -1,6 +1,5 @@
 import asyncio
 import io
-import logging
 import os
 import tempfile
 from pydub import AudioSegment
@@ -36,11 +35,7 @@ class AudioProcessingService:
             # Convert using pydub
             try:
                 sound = AudioSegment.from_file(source_path)
-                sound = (
-                    sound.set_frame_rate(16000)
-                         .set_channels(1)
-                         .set_sample_width(2)
-                )
+                sound = sound.set_frame_rate(16000).set_channels(1).set_sample_width(2)
                 sound.export(output_path, format="wav")
             except Exception as e:
                 raise FFmpegError(f"Audio conversion failed with pydub: {e}") from e
@@ -48,10 +43,10 @@ class AudioProcessingService:
             # Read the converted file
             with open(output_path, "rb") as f:
                 output_bytes = f.read()
-            
+
             # Get file size
             file_size = os.path.getsize(output_path)
-            
+
             return output_bytes, file_size
         finally:
             # Cleanup temporary files
@@ -61,16 +56,22 @@ class AudioProcessingService:
                 except Exception:
                     pass
 
-    async def normalize_audio(self, source_blob_name: str, normalized_blob_name: str) -> None:
+    async def normalize_audio(
+        self, source_blob_name: str, normalized_blob_name: str
+    ) -> None:
         """
         Normalize audio using pydub with temporary files.
         Converts audio to WAV (PCM s16le) 16kHz mono format.
         """
         # Download source blob to bytes
-        source_data = await self.blob_storage_service.download_blob_as_bytes(source_blob_name)
+        source_data = await self.blob_storage_service.download_blob_as_bytes(
+            source_blob_name
+        )
 
         # Run blocking audio conversion in a separate thread
-        converted_bytes, file_size = await asyncio.to_thread(self._blocking_audio_conversion, source_bytes=source_data)
+        converted_bytes, file_size = await asyncio.to_thread(
+            self._blocking_audio_conversion, source_bytes=source_data
+        )
 
         # Prepare stream for upload
         output_stream = io.BytesIO(converted_bytes)

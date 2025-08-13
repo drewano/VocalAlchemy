@@ -17,8 +17,10 @@ class PromptFlowRepository(BaseRepository):
             .where(models.PromptFlow.id == flow_id)
         )
         return result.unique().scalar_one_or_none()
-    
-    async def create(self, user_id: int, data: schemas.PromptFlowCreate) -> models.PromptFlow:
+
+    async def create(
+        self, user_id: int, data: schemas.PromptFlowCreate
+    ) -> models.PromptFlow:
         flow = models.PromptFlow(
             name=data.name,
             description=data.description,
@@ -51,7 +53,9 @@ class PromptFlowRepository(BaseRepository):
     async def get_by_id(self, flow_id: str) -> Optional[models.PromptFlow]:
         return await self._get_with_steps(flow_id)
 
-    async def update(self, flow: models.PromptFlow, data: schemas.PromptFlowUpdate) -> models.PromptFlow:
+    async def update(
+        self, flow: models.PromptFlow, data: schemas.PromptFlowUpdate
+    ) -> models.PromptFlow:
         if data.name is not None:
             flow.name = data.name
         if data.description is not None:
@@ -77,5 +81,3 @@ class PromptFlowRepository(BaseRepository):
     async def delete(self, flow: models.PromptFlow) -> None:
         await self.db.delete(flow)
         await self.db.commit()
-
-

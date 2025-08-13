@@ -1,5 +1,4 @@
 from functools import lru_cache
-from fastapi import Depends
 
 from src.config import settings
 from src.services.blob_storage_service import BlobStorageService

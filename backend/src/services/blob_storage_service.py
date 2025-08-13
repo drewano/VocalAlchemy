@@ -17,7 +17,9 @@ class BlobStorageService:
         storage_connection_string: str,
         storage_container_name: str,
     ) -> None:
-        if not storage_connection_string or not isinstance(storage_connection_string, str):
+        if not storage_connection_string or not isinstance(
+            storage_connection_string, str
+        ):
             raise ValueError("Invalid Azure Storage connection string provided")
         if not storage_container_name or not isinstance(storage_container_name, str):
             raise ValueError("Invalid Azure Storage container name provided")
@@ -26,8 +28,12 @@ class BlobStorageService:
         self.storage_container_name = storage_container_name
 
         # Initialize async blob service and container client (no awaited calls here)
-        self._blob_service = BlobServiceClient.from_connection_string(storage_connection_string)
-        self._container_client = self._blob_service.get_container_client(storage_container_name)
+        self._blob_service = BlobServiceClient.from_connection_string(
+            storage_connection_string
+        )
+        self._container_client = self._blob_service.get_container_client(
+            storage_container_name
+        )
         # Container creation is async; caller should ensure to call `ensure_container_exists` once.
 
     async def ensure_container_exists(self) -> None:
@@ -36,7 +42,12 @@ class BlobStorageService:
         except ResourceExistsError:
             pass
 
-    async def upload_blob(self, content: Union[str, bytes, bytearray], blob_name: str, sas_ttl_hours: int = 24) -> str:
+    async def upload_blob(
+        self,
+        content: Union[str, bytes, bytearray],
+        blob_name: str,
+        sas_ttl_hours: int = 24,
+    ) -> str:
         """
         Upload content to a blob and return a SAS URL with read permission.
         If content is a string, it is encoded in UTF-8 before upload.
@@ -58,7 +69,9 @@ class BlobStorageService:
             content_settings = ContentSettings(content_type="audio/flac")
         elif lower.endswith(".wav"):
             content_settings = ContentSettings(content_type="audio/wav")
-        await blob_client.upload_blob(data, overwrite=True, content_settings=content_settings)
+        await blob_client.upload_blob(
+            data, overwrite=True, content_settings=content_settings
+        )
 
         # Build SAS with read permission
         account_name = self._blob_service.account_name
@@ -87,7 +100,9 @@ class BlobStorageService:
         )
         return f"{blob_client.url}?{sas_token}"
 
-    async def get_blob_upload_sas_url(self, blob_name: str, ttl_minutes: int = 60) -> str:
+    async def get_blob_upload_sas_url(
+        self, blob_name: str, ttl_minutes: int = 60
+    ) -> str:
         if not blob_name or not isinstance(blob_name, str):
             raise ValueError("Invalid blob_name provided")
         blob_client = self._container_client.get_blob_client(blob_name)
@@ -129,7 +144,9 @@ class BlobStorageService:
             # Let unexpected exceptions bubble up for caller handling
             raise
 
-    async def upload_blob_from_stream(self, stream: any, blob_name: str, length: int) -> None:
+    async def upload_blob_from_stream(
+        self, stream: any, blob_name: str, length: int
+    ) -> None:
         if not blob_name or not isinstance(blob_name, str):
             raise ValueError("Invalid blob_name provided")
         if not isinstance(length, int) or length < 0:
@@ -171,7 +188,9 @@ class BlobStorageService:
             # Let unexpected exceptions bubble up for caller handling
             raise
 
-    async def upload_blob_from_generator(self, generator: AsyncIterator[bytes], blob_name: str) -> None:
+    async def upload_blob_from_generator(
+        self, generator: AsyncIterator[bytes], blob_name: str
+    ) -> None:
         """
         Upload blob content from an async generator/iterator of bytes chunks.
         The total size of the stream is unknown, so no length parameter is passed.
@@ -185,4 +204,6 @@ class BlobStorageService:
             content_settings = ContentSettings(content_type="audio/flac")
         elif lower.endswith(".wav"):
             content_settings = ContentSettings(content_type="audio/wav")
-        await blob_client.upload_blob(generator, overwrite=True, content_settings=content_settings)
+        await blob_client.upload_blob(
+            generator, overwrite=True, content_settings=content_settings
+        )

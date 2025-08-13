@@ -18,8 +18,14 @@ def get_user_repository(db: AsyncSession = Depends(get_async_db)) -> UserReposit
     return UserRepository(db)
 
 
-@router.post("/register", response_model=schemas.User, status_code=status.HTTP_201_CREATED)
-async def register_user(user: schemas.UserCreate, db: AsyncSession = Depends(get_async_db), user_repo: UserRepository = Depends(get_user_repository)):
+@router.post(
+    "/register", response_model=schemas.User, status_code=status.HTTP_201_CREATED
+)
+async def register_user(
+    user: schemas.UserCreate,
+    db: AsyncSession = Depends(get_async_db),
+    user_repo: UserRepository = Depends(get_user_repository),
+):
     """Register a new user."""
     # Check if user already exists
     db_user = await user_repo.get_by_email(user.email)
@@ -31,7 +37,9 @@ async def register_user(user: schemas.UserCreate, db: AsyncSession = Depends(get
 
     # Create new user
     try:
-        db_user = await user_repo.create(email=user.email, hashed_password=hashed_password)
+        db_user = await user_repo.create(
+            email=user.email, hashed_password=hashed_password
+        )
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -40,7 +48,10 @@ async def register_user(user: schemas.UserCreate, db: AsyncSession = Depends(get
 
 
 @router.post("/token", response_model=schemas.Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_async_db)):
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_async_db),
+):
     """Authenticate user and return JWT token along with user info."""
     user = await auth.authenticate_user(db, form_data.username, form_data.password)
     if not user:

@@ -1,5 +1,4 @@
-from typing import Optional
-from pydantic import Field, PostgresDsn, constr, AnyUrl
+from pydantic import Field, PostgresDsn, constr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,7 +21,9 @@ class Settings(BaseSettings):
     )
 
     # Redis / ARQ
-    REDIS_URL: str = Field(default="redis://redis:6379/0", description="Redis connection URL")
+    REDIS_URL: str = Field(
+        default="redis://redis:6379/0", description="Redis connection URL"
+    )
 
     # JWT configuration
     SECRET_KEY: constr(strip_whitespace=True, min_length=1) = Field(
@@ -32,12 +33,16 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=1440, ge=1)
 
     # Upload limits
-    MAX_UPLOAD_SIZE_MB: int = Field(default=500, ge=1, description="Maximum upload file size in megabytes")
+    MAX_UPLOAD_SIZE_MB: int = Field(
+        default=500, ge=1, description="Maximum upload file size in megabytes"
+    )
 
     # LiteLLM debug mode: enable detailed LiteLLM logging when set to True (overridable via env var)
     LITELLM_DEBUG: bool = Field(default=False)
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
 
 settings = Settings()
