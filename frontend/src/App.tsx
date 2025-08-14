@@ -1,14 +1,9 @@
-import { Outlet } from 'react-router-dom'
-import './App.css'
+import { Outlet } from 'react-router-dom';
 
 function App() {
-  return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
-      <main className="flex-1 flex flex-col">
-        <Outlet />
-      </main>
-    </div>
-  )
+  // Ce composant devient une coquille simple si besoin, mais pour l'instant
+  // Outlet rendra le composant de la route correspondante.
+  return <Outlet />;
 }
 
-export default App
+export default App;

@@ -1,176 +1,132 @@
-import React, { useEffect, useState } from 'react'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import React, { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { getUserPrompts, createUserPrompt, updateUserPrompt, deleteUserPrompt } from '@/services/prompts.api'
-import type { UserPrompt } from '@/types'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Brain, Code2, UsersRound, ClipboardList, MessageSquare } from 'lucide-react'
+import { getPromptFlows } from '@/services/promptFlows.api'
+import type { PromptFlow } from '@/types'
 
-function truncate(text: string, max = 120) {
-  if (!text) return ''
-  return text.length > max ? text.slice(0, max) + '…' : text
-}
+type LibraryItem = { id: string; name: string; icon: React.ComponentType<{ className?: string }> }
+
+const LIBRARY_ITEMS: LibraryItem[] = [
+  { id: 'brainstorm', name: 'Brainstorming', icon: Brain },
+  { id: 'code-review', name: 'Code Review Meeting', icon: Code2 },
+  { id: 'team-sync', name: 'Réunion d\'équipe', icon: UsersRound },
+  { id: 'retrospective', name: 'Rétrospective', icon: ClipboardList },
+  { id: 'interview', name: 'Entretien d\'embauche', icon: MessageSquare },
+]
 
 export default function PromptsPage() {
-  const [prompts, setPrompts] = useState<UserPrompt[]>([])
-  const [loading, setLoading] = useState<boolean>(false)
+  const navigate = useNavigate()
+  const [query, setQuery] = useState('')
+  const [tab, setTab] = useState<'library' | 'mine'>('library')
+  const [flows, setFlows] = useState<PromptFlow[]>([])
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [open, setOpen] = useState<boolean>(false)
-  const [editing, setEditing] = useState<UserPrompt | null>(null)
-  const [form, setForm] = useState<{ name: string; content: string }>({ name: '', content: '' })
-  const [saving, setSaving] = useState<boolean>(false)
-
-  const fetchData = async () => {
+  useEffect(() => {
+    if (tab !== 'mine') return
+    let active = true
     setLoading(true)
     setError(null)
-    try {
-      const data = await getUserPrompts()
-      setPrompts(data)
-    } catch (e: any) {
-      setError(e?.message || 'Erreur lors du chargement des prompts.')
-    } finally {
-      setLoading(false)
+    getPromptFlows()
+      .then((data) => {
+        if (!active) return
+        setFlows(data)
+      })
+      .catch((e) => setError(e?.message || 'Erreur lors du chargement de vos flux.'))
+      .finally(() => active && setLoading(false))
+    return () => {
+      active = false
     }
-  }
+  }, [tab])
 
-  useEffect(() => {
-    fetchData()
-  }, [])
+  const filteredLibrary = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return LIBRARY_ITEMS
+    return LIBRARY_ITEMS.filter((i) => i.name.toLowerCase().includes(q))
+  }, [query])
 
-  const onCreateClick = () => {
-    setEditing(null)
-    setForm({ name: '', content: '' })
-    setOpen(true)
-  }
-
-  const onEditClick = (p: UserPrompt) => {
-    setEditing(p)
-    setForm({ name: p.name, content: p.content })
-    setOpen(true)
-  }
-
-  const onDelete = async (id: number) => {
-    if (!confirm('Supprimer ce prompt ?')) return
-    try {
-      await deleteUserPrompt(id)
-      await fetchData()
-    } catch (e: any) {
-      setError(e?.message || 'Suppression échouée.')
-    }
-  }
-
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSaving(true)
-    setError(null)
-    try {
-      if (editing) {
-        await updateUserPrompt(editing.id, form)
-      } else {
-        await createUserPrompt(form)
-      }
-      setOpen(false)
-      await fetchData()
-    } catch (e: any) {
-      setError(e?.message || 'Enregistrement échoué.')
-    } finally {
-      setSaving(false)
-    }
-  }
+  const filteredFlows = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return flows
+    return flows.filter((f) => f.name.toLowerCase().includes(q))
+  }, [query, flows])
 
   return (
-    <div className="mx-auto max-w-5xl p-6">
-      <Card>
-        <CardHeader className="flex items-center justify-between gap-4 sm:flex-row">
-          <div>
-            <CardTitle className="text-xl">Prompts personnalisés</CardTitle>
-            <CardDescription>Créez et gérez vos prompts pour l'analyse.</CardDescription>
-          </div>
-          <Button onClick={onCreateClick}>Créer un nouveau prompt</Button>
-        </CardHeader>
-        <CardContent>
-          {error && (
-            <div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </div>
-          )}
+    <div className="mx-auto max-w-6xl p-6">
+      {/* Barre d'actions sticky */}
+      <div className="sticky top-0 z-20 -mx-6 px-6 py-4 mb-6 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Rechercher un prompt…"
+            className="sm:max-w-sm"
+            aria-label="Rechercher"
+          />
+          <Button onClick={() => navigate('/prompts/new')}>Créer un prompt</Button>
+        </div>
+      </div>
 
+      {error && (
+        <div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+
+      <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
+        <TabsList>
+          <TabsTrigger value="library">Bibliothèque</TabsTrigger>
+          <TabsTrigger value="mine">Mes prompts</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="library" className="mt-4">
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredLibrary.map((item) => {
+              const Icon = item.icon
+              return (
+                <Card key={item.id} className="hover:border-primary/60 transition-colors">
+                  <CardHeader className="flex flex-row items-center gap-3">
+                    <div className="rounded-md bg-muted p-2"><Icon className="h-5 w-5" /></div>
+                    <CardTitle className="text-base">{item.name}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Button variant="outline" onClick={() => navigate('/prompts/new')}>
+                      Utiliser ce modèle
+                    </Button>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="mine" className="mt-4">
           {loading ? (
             <div className="text-sm text-muted-foreground">Chargement…</div>
-          ) : prompts.length === 0 ? (
-            <div className="text-sm text-muted-foreground">Aucun prompt trouvé.</div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nom</TableHead>
-                  <TableHead>Contenu (tronqué)</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {prompts.map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-medium">{p.name}</TableCell>
-                    <TableCell className="max-w-[520px]">{truncate(p.content)}</TableCell>
-                    <TableCell className="space-x-2">
-                      <Button variant="outline" size="sm" onClick={() => onEditClick(p)}>
-                        Modifier
-                      </Button>
-                      <Button variant="destructive" size="sm" onClick={() => onDelete(p.id)}>
-                        Supprimer
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredFlows.map((flow) => (
+                <Card key={flow.id} className="hover:border-primary/60 transition-colors">
+                  <CardHeader className="flex flex-row items-center gap-3">
+                    <div className="rounded-md bg-muted p-2"><Brain className="h-5 w-5" /></div>
+                    <CardTitle className="text-base">{flow.name}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="flex gap-2">
+                    <Button variant="outline" onClick={() => navigate(`/prompts/${flow.id}`)}>Éditer</Button>
+                  </CardContent>
+                </Card>
+              ))}
+              {filteredFlows.length === 0 && !loading && (
+                <div className="text-sm text-muted-foreground">Aucun flux trouvé.</div>
+              )}
+            </div>
           )}
-        </CardContent>
-      </Card>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editing ? 'Modifier le prompt' : 'Nouveau prompt'}</DialogTitle>
-            <DialogDescription>
-              Définissez un nom et le contenu de votre prompt. Le nom sera utilisé pour la sélection rapide.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={onSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Nom</label>
-              <Input
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="Nom du prompt"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Contenu</label>
-              <Textarea
-                value={form.content}
-                onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
-                placeholder="Le contenu complet du prompt"
-                rows={8}
-                required
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={saving}>
-                Annuler
-              </Button>
-              <Button type="submit" disabled={saving}>
-                {saving ? 'Enregistrement…' : 'Enregistrer'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

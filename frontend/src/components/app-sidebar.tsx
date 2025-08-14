@@ -1,9 +1,8 @@
 import * as React from "react"
 import { useContext } from "react"
 import { Link, useLocation } from "react-router-dom"
-import { LayoutDashboard, History, FileText, Lightbulb, Settings, PanelLeftIcon, LogOut } from "lucide-react"
+import { FileText, Lightbulb, Settings, PanelLeftIcon, LogOut, Users } from "lucide-react"
 
-import { SearchForm } from "@/components/search-form"
 import logoUrl from "@/assets/logo.svg"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
@@ -27,15 +26,13 @@ import AuthContext from "@/contexts/AuthContext"
 
 // Items de navigation principale (basés sur router.tsx)
 const mainNavItems: Array<{ href: string; label: string; icon: React.ComponentType; tooltip: string }> = [
-  { href: '/', label: 'Tableau de bord', icon: LayoutDashboard, tooltip: 'Tableau de bord' },
-  { href: '/history', label: 'Historique', icon: History, tooltip: 'Historique des analyses' },
-  { href: '/documents', label: 'Documents', icon: FileText, tooltip: 'Gestion des documents' },
+  { href: '/meetings', label: 'Réunions', icon: FileText, tooltip: 'Réunions' },
   { href: '/prompts', label: 'Gérer les prompts', icon: Lightbulb, tooltip: 'Gérer les prompts' },
 ]
 
-export function AppSidebar({ onSearchChange, ...props }: React.ComponentProps<typeof Sidebar> & { onSearchChange?: (term: string) => void }) {
+export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const location = useLocation()
-  const { toggleSidebar, state } = useSidebar()
+  const { toggleSidebar } = useSidebar()
   const { user, logout } = useContext(AuthContext) ?? {}
 
   return (
@@ -45,7 +42,7 @@ export function AppSidebar({ onSearchChange, ...props }: React.ComponentProps<ty
           {/* Left: Logo (expanded only) */}
           <Link
             to="/"
-            className="flex items-center gap-2 group-data-[collapsible=icon]:hidden"
+            className="flex items-center gap-2"
           >
             <img
               src={logoUrl}
@@ -56,22 +53,8 @@ export function AppSidebar({ onSearchChange, ...props }: React.ComponentProps<ty
 
           {/* Spacer */}
           <div className="flex-1" />
-
-          {/* Right: Toggle (always visible) */}
-          <SidebarMenuButton
-            onClick={toggleSidebar}
-            tooltip="Réduire / Agrandir"
-            className="h-8 px-2 flex items-center justify-center gap-2 transition-all duration-200 group-data-[collapsible=icon]:translate-x-1 group-hover:translate-x-0 focus-visible:ring-2"
-          >
-            <PanelLeftIcon
-              className={`size-4 transition-transform duration-300 ${state === 'collapsed' ? 'rotate-180' : ''}`}
-            />
-            <span className="sr-only">{state === 'collapsed' ? 'Agrandir' : 'Réduire'}</span>
-          </SidebarMenuButton>
         </div>
-        <div className="group-data-[collapsible=icon]:hidden">
-          <SearchForm className="px-0" onSearchChange={onSearchChange} />
-        </div>
+        {/* Search removed from sidebar */}
       </SidebarHeader>
       <SidebarContent>
         {/* Nav principale */}
@@ -82,7 +65,7 @@ export function AppSidebar({ onSearchChange, ...props }: React.ComponentProps<ty
                 <SidebarMenuButton
                   asChild
                   tooltip={tooltip}
-                  isActive={location.pathname === href}
+                  isActive={href === '/meetings' ? (location.pathname === '/meetings' || location.pathname === '/' || location.pathname.startsWith('/meetings')) : (location.pathname === href)}
                   className="h-8 px-2 [&>svg]:size-4"
                 >
                   <Link to={href}>
@@ -92,6 +75,21 @@ export function AppSidebar({ onSearchChange, ...props }: React.ComponentProps<ty
                 </SidebarMenuButton>
               </SidebarMenuItem>
             ))}
+            {user?.is_admin && (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  tooltip="Administration"
+                  isActive={location.pathname === '/admin'}
+                  className="h-8 px-2 [&>svg]:size-4"
+                >
+                  <Link to="/admin">
+                    <Users />
+                    <span>Administration</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
           </SidebarMenu>
         </nav>
       </SidebarContent>
@@ -100,6 +98,13 @@ export function AppSidebar({ onSearchChange, ...props }: React.ComponentProps<ty
         <div className="border-t" />
         <nav className="px-2 py-2">
           <SidebarMenu>
+            {/* Réduire */}
+            <SidebarMenuItem>
+              <SidebarMenuButton onClick={toggleSidebar} tooltip="Réduire" className="h-8 px-2 [&>svg]:size-4">
+                <PanelLeftIcon />
+                <span className="group-data-[collapsible=icon]:hidden">Réduire</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             {/* Paramètres */}
             <SidebarMenuItem>
               <SidebarMenuButton asChild tooltip="Paramètres" className="h-8 px-2 [&>svg]:size-4">
@@ -118,7 +123,7 @@ export function AppSidebar({ onSearchChange, ...props }: React.ComponentProps<ty
                     <div className="flex items-center gap-2">
                       <Avatar>
                         <AvatarFallback>
-                          {user?.email ? user.email.split('@')[0].slice(0, 2).toUpperCase() : '??'}
+                          {user?.email ? user.email.slice(0, 2).toUpperCase() : '??'}
                         </AvatarFallback>
                       </Avatar>
                       <span className="group-data-[collapsible=icon]:hidden">

@@ -1,31 +1,15 @@
-import os
-import shutil
-import concurrent.futures
-from typing import Optional, Protocol, List
+import logging
 
-from src.infrastructure.repositories.analysis_repository import AnalysisRepository
-from src.services.external_apis.gladia_client import GladiaClient
-from src.services.external_apis.ai_processor import GoogleAIProcessor
-from src.infrastructure.sql_models import AnalysisStatus
+from ..infrastructure.repositories.analysis_repository import AnalysisRepository
+from ..infrastructure.sql_models import AnalysisStatus
+from .blob_storage_service import BlobStorageService
+from .audio_processing_service import AudioProcessingService
+from .transcription_orchestrator_service import TranscriptionOrchestratorService
+from .ai_pipeline_service import AIPipelineService
 
 
 class AnalysisNotFoundException(Exception):
     pass
-
-
-class AudioSplitter(Protocol):
-    def __call__(self, source_path: str, output_dir: str) -> List[str]:
-        ...
-
-
-class Transcriber(Protocol):
-    def transcribe_audio_chunk(self, audio_chunk_path: str) -> str:
-        ...
-
-
-class AIAnalyzer(Protocol):
-    def analyze_transcript(self, transcript: str, user_prompt: Optional[str] = None) -> str:
-        ...
 
 
 class AnalysisService:
@@ -33,153 +17,322 @@ class AnalysisService:
         self,
         analysis_repo: AnalysisRepository,
         *,
-        audio_splitter: AudioSplitter,
-        transcriber: Transcriber,
-        ai_analyzer: AIAnalyzer,
+        audio_processing_service: AudioProcessingService,
+        transcription_orchestrator_service: TranscriptionOrchestratorService,
+        ai_pipeline_service: AIPipelineService,
+        blob_storage_service: BlobStorageService,
     ) -> None:
         self.analysis_repo = analysis_repo
-        self.audio_splitter = audio_splitter
-        self.gladia_client = transcriber
-        self.google_ai = ai_analyzer
+        self.audio_processing_service = audio_processing_service
+        self.transcription_orchestrator_service = transcription_orchestrator_service
+        self.ai_pipeline_service = ai_pipeline_service
+        self.blob_storage_service = blob_storage_service
 
-    def _extract_people_involved(self, analysis_text: str) -> Optional[str]:
-        if not analysis_text:
-            return None
-        marker = "### Personnes Concernées"
-        idx = analysis_text.find(marker)
-        if idx == -1:
-            return None
-        return analysis_text[idx + len(marker):].strip() or None
-
-    def _prepare_segments_dir(self, base_output_dir: str) -> str:
-        segments_dir = os.path.join(base_output_dir, "segments")
-        os.makedirs(segments_dir, exist_ok=True)
-        return segments_dir
-
-    def _write_text_file(self, path: str, content: str) -> None:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-
-    def run_full_pipeline(self, analysis_id: str, source_path: str, base_output_dir: str, user_prompt: Optional[str] = None) -> str:
-        if not source_path or not isinstance(source_path, str):
-            raise ValueError("Invalid source_path provided")
-        if not base_output_dir or not isinstance(base_output_dir, str):
-            raise ValueError("Invalid base_output_dir provided")
-        if not os.path.exists(source_path):
-            raise FileNotFoundError(f"Source file not found: {source_path}")
-
-        try:
-            segments_dir = self._prepare_segments_dir(base_output_dir)
-
-            # Update status and split audio
-            self.analysis_repo.update_status(analysis_id, AnalysisStatus.PROCESSING)
-            segment_paths = self.audio_splitter(source_path, segments_dir)
-
-            # Transcribe in parallel
-            total_chunks = len(segment_paths)
-            transcriptions: List[Optional[str]] = [None] * total_chunks
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future_to_index = {
-                    executor.submit(self.gladia_client.transcribe_audio_chunk, segment_paths[idx]): idx
-                    for idx in range(total_chunks)
-                }
-
-                completed = 0
-                for future in concurrent.futures.as_completed(future_to_index):
-                    idx = future_to_index[future]
-                    try:
-                        transcriptions[idx] = future.result()
-                    except Exception as e:
-                        transcriptions[idx] = ""
-                        # propagate error to be caught by outer try/except
-                        raise e
-                    finally:
-                        completed += 1
-                        self.analysis_repo.update_progress(analysis_id, int((completed / max(total_chunks, 1)) * 100))
-
-            full_text = "\n".join(t for t in transcriptions if t)
-            transcript_path = os.path.join(base_output_dir, "transcription.txt")
-            self._write_text_file(transcript_path, full_text)
-
-            # Analyze
-            analysis_result = self.google_ai.analyze_transcript(full_text, user_prompt)
-
-            # Save report
-            report_path = os.path.join(base_output_dir, "report.txt")
-            self._write_text_file(report_path, analysis_result)
-
-            people_involved = self._extract_people_involved(analysis_result)
-            self.analysis_repo.add_version(
-                analysis_id=analysis_id,
-                prompt_used=user_prompt or "",
-                result_path=report_path,
-                people_involved=people_involved,
-            )
-
-            # Finish
-            self.analysis_repo.update_paths_and_status(analysis_id, status=AnalysisStatus.COMPLETED, transcript_path=transcript_path)
-            self.analysis_repo.update_progress(analysis_id, 100)
-
-            # Cleanup
-            if os.path.exists(segments_dir):
-                shutil.rmtree(segments_dir)
-
-            return report_path
-        except Exception as e:
-            import logging
-            logging.error(f"Pipeline failed for analysis {analysis_id}: {e}")
-            # Mark FAILED and persist error details
-            self.analysis_repo.update_paths_and_status(analysis_id, status=AnalysisStatus.FAILED)
-            analysis = self.analysis_repo.get_by_id(analysis_id)
-            if analysis:
-                analysis.status = AnalysisStatus.FAILED
-                analysis.error_message = str(e)
-                self.analysis_repo.db.commit()
-            raise
-
-    def delete_analysis(self, analysis_id: str, user_id: int) -> None:
-        analysis = self.analysis_repo.get_detailed_by_id(analysis_id)
+    async def get_result_content(self, analysis_id: str, user_id: int) -> str:
+        analysis = await self.analysis_repo.get_by_id(analysis_id)
         if not analysis:
-            raise AnalysisNotFoundException(f"Analysis not found: {analysis_id}")
+            raise AnalysisNotFoundException("Analysis not found")
         if analysis.user_id != user_id:
-            raise PermissionError('Access denied')
-
-        base_dir = None
-        if analysis.source_file_path:
-            try:
-                base_dir = os.path.dirname(analysis.source_file_path)
-            except Exception:
-                base_dir = None
-        if base_dir and os.path.exists(base_dir):
-            try:
-                shutil.rmtree(base_dir)
-            except FileNotFoundError:
-                pass
-
-        self.analysis_repo.delete(analysis_id)
-
-    def rerun_analysis_from_transcript(self, analysis_id: str, transcript: str, new_prompt: Optional[str], base_output_dir: str) -> str:
-        if not transcript or not isinstance(transcript, str):
-            raise ValueError("Invalid transcript provided")
-        if not base_output_dir or not isinstance(base_output_dir, str):
-            raise ValueError("Invalid base_output_dir provided")
-
-        self.analysis_repo.update_status(analysis_id, AnalysisStatus.PROCESSING)
-        analysis_result = self.google_ai.analyze_transcript(transcript, new_prompt)
-
-        ts = str(int(__import__("time").time()))
-        report_path = os.path.join(base_output_dir, f"report_{ts}.txt")
-        self._write_text_file(report_path, analysis_result)
-
-        people_involved = self._extract_people_involved(analysis_result)
-        self.analysis_repo.add_version(
-            analysis_id=analysis_id,
-            prompt_used=new_prompt or "",
-            result_path=report_path,
-            people_involved=people_involved,
+            raise PermissionError("Access denied")
+        if analysis.status != AnalysisStatus.COMPLETED:
+            raise ValueError("Task not completed yet")
+        if not getattr(analysis, "result_blob_name", None):
+            raise FileNotFoundError("Result not found")
+        return await self.blob_storage_service.download_blob_as_text(
+            analysis.result_blob_name
         )
 
-        self.analysis_repo.update_status(analysis_id, AnalysisStatus.COMPLETED)
-        self.analysis_repo.update_progress(analysis_id, 100)
-        return report_path
+    async def get_transcript_content(self, analysis_id: str, user_id: int) -> str:
+        analysis = await self.analysis_repo.get_by_id(analysis_id)
+        if not analysis:
+            raise AnalysisNotFoundException("Analysis not found")
+        if analysis.user_id != user_id:
+            raise PermissionError("Access denied")
+        if analysis.status != AnalysisStatus.COMPLETED:
+            raise ValueError("Task not completed yet")
+        if not getattr(analysis, "transcript_blob_name", None):
+            raise FileNotFoundError("Transcript not found")
+        return await self.blob_storage_service.download_blob_as_text(
+            analysis.transcript_blob_name
+        )
+
+    async def get_audio_sas_url(self, analysis_id: str, user_id: int) -> str:
+        analysis = await self.analysis_repo.get_by_id(analysis_id)
+        if not analysis:
+            raise AnalysisNotFoundException("Analysis not found")
+        if analysis.user_id != user_id:
+            raise PermissionError("Access denied")
+        blob_name = getattr(analysis, "normalized_blob_name", None)
+        if not blob_name:
+            raise FileNotFoundError("No processed audio file available")
+        return await self.blob_storage_service.get_blob_sas_url(blob_name)
+
+    async def get_version_result_content(self, version_id: str, user_id: int) -> str:
+        version = await self.analysis_repo.get_version_by_id(version_id)
+        if not version:
+            raise AnalysisNotFoundException("Version not found")
+        analysis = await self.analysis_repo.get_by_id(version.analysis_id)
+        if not analysis:
+            raise AnalysisNotFoundException("Parent analysis not found")
+        if analysis.user_id != user_id:
+            raise PermissionError("Access denied")
+        if not getattr(version, "result_blob_name", None):
+            raise FileNotFoundError("Version result not found")
+        return await self.blob_storage_service.download_blob_as_text(
+            version.result_blob_name
+        )
+
+    async def process_audio_for_transcription(self, analysis_id: str) -> None:
+        # Récupération de l'objet analysis
+        analysis = await self.analysis_repo.get_by_id(analysis_id)
+        if not analysis:
+            raise ValueError(f"Analysis not found: {analysis_id}")
+
+        # Mise à jour du statut à TRANSCRIPTION_IN_PROGRESS
+        await self.analysis_repo.update_status(
+            analysis_id, AnalysisStatus.TRANSCRIPTION_IN_PROGRESS
+        )
+
+        # Génération d'un nom de blob unique pour le fichier normalisé (FLAC 16kHz mono)
+        normalized_blob_name = f"{analysis.user_id}/{analysis_id}/normalized.flac"
+
+        # Normalisation audio en streaming vers le format FLAC
+        try:
+            await self.audio_processing_service.normalize_audio(
+                analysis.source_blob_name, normalized_blob_name
+            )
+            
+            # Suppression du fichier audio original après normalisation
+            try:
+                await self.blob_storage_service.delete_blob(analysis.source_blob_name)
+            except Exception as e:
+                logging.warning(
+                    "Failed to delete original audio blob '%s' for analysis %s: %s",
+                    analysis.source_blob_name,
+                    analysis_id,
+                    e,
+                )
+        except FFmpegError as e:
+            logging.error(
+                "Audio normalization failed for analysis %s: %s", analysis_id, e
+            )
+            await self.analysis_repo.update_status(
+                analysis_id, AnalysisStatus.TRANSCRIPTION_FAILED
+            )
+            analysis.error_message = str(e)
+            try:
+                await self.analysis_repo.db.commit()
+            except Exception:
+                pass
+            raise
+
+        # Submit transcription using the new orchestrator service
+        await self.transcription_orchestrator_service.submit_transcription(
+            analysis.id, normalized_blob_name
+        )
+
+    
+
+    async def run_ai_analysis_pipeline(self, analysis_id: str) -> None:
+        # Use the new AI pipeline service to run the analysis
+        await self.ai_pipeline_service.run_pipeline(analysis_id)
+
+    async def delete_analysis_data(self, analysis_id: str, user_id: int) -> None:
+        analysis = await self.analysis_repo.get_detailed_by_id(analysis_id)
+        if not analysis:
+            raise ValueError(f"Analysis not found: {analysis_id}")
+        if analysis.user_id != user_id:
+            raise PermissionError("Access denied")
+
+        # Construire la liste complète des noms de blobs à supprimer
+        blob_names: list[str] = []
+        
+        # Ajouter les blobs de l'analyse principale
+        if analysis.source_blob_name:
+            blob_names.append(analysis.source_blob_name)
+        if analysis.normalized_blob_name:
+            blob_names.append(analysis.normalized_blob_name)
+        if analysis.transcript_blob_name:
+            blob_names.append(analysis.transcript_blob_name)
+        if analysis.result_blob_name:
+            blob_names.append(analysis.result_blob_name)
+            
+        # Ajouter les blobs des versions d'analyse
+        for v in analysis.versions or []:
+            if v.result_blob_name:
+                blob_names.append(v.result_blob_name)
+
+        # Supprimer tous les blobs identifiés
+        for name in blob_names:
+            try:
+                await self.blob_storage_service.delete_blob(name)
+            except Exception as e:
+                logging.warning(
+                    f"Failed to delete blob '{name}' for analysis {analysis_id}: {e}"
+                )
+
+        await self.analysis_repo.delete(analysis_id)
+
+    async def overwrite_transcript_content(
+        self, analysis_id: str, user_id: int, content: str
+    ) -> None:
+        analysis = await self.analysis_repo.get_by_id(analysis_id)
+        if not analysis:
+            raise AnalysisNotFoundException("Analysis not found")
+        if analysis.user_id != user_id:
+            raise PermissionError("Access denied")
+        if not getattr(analysis, "transcript_blob_name", None):
+            raise FileNotFoundError("Transcript not found")
+
+        # Overwrite transcript blob
+        await self.blob_storage_service.upload_blob(
+            content, analysis.transcript_blob_name
+        )
+        # Update snippet
+        snippet = (content or "")[:200]
+        await self.analysis_repo.update_paths_and_status(
+            analysis_id,
+            transcript_snippet=snippet,
+        )
+
+    async def update_step_result_content(
+        self, step_result_id: str, user_id: int, content: str
+    ) -> None:
+        # Ensure the step result belongs to the requesting user via version -> analysis
+        step_result = await self.analysis_repo.get_step_result_with_analysis_owner(
+            step_result_id
+        )
+        if not step_result:
+            raise ValueError("Step result not found")
+
+        version = getattr(step_result, "version", None)
+        analysis = getattr(version, "analysis_record", None)
+        if not analysis or analysis.user_id != user_id:
+            raise PermissionError("Access denied")
+
+        step_result.content = content
+        try:
+            await self.analysis_repo.db.commit()
+        except Exception:
+            pass
+
+    async def rerun_transcription(self, analysis_id: str, user_id: int) -> None:
+        """
+        Relance uniquement la transcription d'une analyse.
+        """
+        # Vérifier que l'analyse existe et appartient à l'utilisateur
+        analysis = await self.analysis_repo.get_by_id(analysis_id)
+        if not analysis:
+            raise AnalysisNotFoundException("Analysis not found")
+        if analysis.user_id != user_id:
+            raise PermissionError("Access denied")
+
+        # Mettre à jour le statut à TRANSCRIPTION_PENDING
+        await self.analysis_repo.update_status(
+            analysis_id, AnalysisStatus.TRANSCRIPTION_PENDING
+        )
+
+        # Enfiler la tâche de transcription
+        # Note: L'enfilement de la tâche se fait dans la couche API/worker, pas dans le service
+
+    async def rerun_ai_analysis_step(
+        self, step_result_id: str, new_prompt_content: str = None
+    ) -> None:
+        """
+        Relance une seule étape de l'analyse IA.
+        """
+        # Use the new AI pipeline service to rerun the step
+        await self.ai_pipeline_service.rerun_step(step_result_id, new_prompt_content)
+
+    async def get_detailed_analysis_dto(self, analysis_id: str, user_id: int):
+        """
+        Récupère les détails d'une analyse et les retourne sous forme de DTO.
+        """
+        from src.api import schemas
+
+        a = await self.analysis_repo.get_detailed_by_id(analysis_id)
+        if not a:
+            raise AnalysisNotFoundException("Analysis not found")
+        if a.user_id != user_id:
+            raise PermissionError("Access denied")
+
+        # Sort versions by created_at desc
+        versions_sorted = sorted(
+            a.versions or [], key=lambda v: v.created_at or 0, reverse=True
+        )
+
+        # Read transcript content
+        transcript_content = ""
+        if getattr(a, "transcript_blob_name", None):
+            try:
+                transcript_content = (
+                    await self.blob_storage_service.download_blob_as_text(
+                        a.transcript_blob_name
+                    )
+                )
+            except Exception:
+                transcript_content = ""
+
+        # Latest analysis content and people involved (keep compatibility)
+        latest_analysis_content = ""
+        people_involved = None
+        action_plan = None
+        if versions_sorted:
+            latest_version = versions_sorted[0]
+            if getattr(latest_version, "result_blob_name", None):
+                try:
+                    latest_analysis_content = (
+                        await self.blob_storage_service.download_blob_as_text(
+                            latest_version.result_blob_name
+                        )
+                    )
+                except Exception:
+                    latest_analysis_content = ""
+            people_involved = latest_version.people_involved
+            try:
+                if latest_version.structured_plan is not None:
+                    if (
+                        isinstance(latest_version.structured_plan, dict)
+                        and "extractions" in latest_version.structured_plan
+                    ):
+                        action_plan = latest_version.structured_plan.get("extractions")
+                    elif isinstance(latest_version.structured_plan, list):
+                        action_plan = latest_version.structured_plan
+                    else:
+                        action_plan = latest_version.structured_plan
+            except Exception:
+                action_plan = None
+
+        return schemas.AnalysisDetail(
+            id=a.id,
+            status=a.status,
+            created_at=a.created_at,
+            filename=a.filename,
+            prompt=None,
+            transcript=transcript_content,
+            latest_analysis=latest_analysis_content or "",
+            people_involved=people_involved,
+            action_plan=action_plan,
+            error_message=a.error_message,
+            versions=[
+                schemas.AnalysisVersion(
+                    id=v.id,
+                    prompt_used=v.prompt_used,
+                    created_at=v.created_at,
+                    people_involved=v.people_involved,
+                    steps=[
+                        schemas.AnalysisStepResult(
+                            id=sr.id,
+                            step_name=sr.step_name,
+                            step_order=sr.step_order,
+                            status=str(sr.status.value)
+                            if hasattr(sr.status, "value")
+                            else str(sr.status),
+                            content=sr.content,
+                        )
+                        for sr in (v.steps or [])
+                    ],
+                )
+                for v in versions_sorted
+            ],
+        )

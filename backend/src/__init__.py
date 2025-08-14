@@ -1,1 +1,1 @@
- 
+"""Backend src package initialization."""

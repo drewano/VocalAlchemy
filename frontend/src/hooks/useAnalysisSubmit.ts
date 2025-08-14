@@ -4,11 +4,20 @@ import * as api from '@/services/api'
 export function useAnalysisSubmit() {
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const submitAnalysis = useCallback(async (file: File, prompt: string): Promise<string> => {
+  const submitAnalysis = useCallback(async (file: File, promptFlowId: string): Promise<string> => {
     setIsSubmitting(true)
     try {
-      const { analysis_id } = await api.processAudio(file, prompt)
-      return analysis_id
+      // Étape 1 : Initiation - Obtenir l'URL SAS et créer l'enregistrement d'analyse
+      const { sasUrl, analysisId } = await api.initiateUpload(file.name, file.size)
+
+      // Étape 2 : Upload direct - Envoyer le fichier vers Azure Blob Storage
+      await api.uploadFileToSasUrl(sasUrl, file)
+
+      // Étape 3 : Finalisation - Déclencher le traitement en arrière-plan
+      await api.finalizeUpload(analysisId, promptFlowId)
+
+      // Étape 4 : Résultat - Retourner l'ID pour la navigation
+      return analysisId
     } catch (err) {
       // Propagate error to the caller
       throw err

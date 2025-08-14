@@ -20,5 +20,3 @@ export default function AppearanceSettings() {
     </Card>
   )
 }
-
-export { AppearanceSettings }

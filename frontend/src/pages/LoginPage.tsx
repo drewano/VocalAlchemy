@@ -27,7 +27,7 @@ const LoginPage: React.FC = () => {
       authLogin(response.access_token, response.user);
       navigate('/'); // Rediriger vers le tableau de bord
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Erreur de connexion');
+      setError(err.message || 'Erreur de connexion');
     } finally {
       setIsLoading(false);
     }

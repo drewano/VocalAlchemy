@@ -1,108 +1,233 @@
 from typing import List, Optional
-from sqlalchemy.orm import Session, joinedload
-from src.infrastructure.repositories.base_repository import BaseRepository
-from src.infrastructure import sql_models as models
+from sqlalchemy import select, func
+from sqlalchemy.orm import joinedload, selectinload
+from .base_repository import BaseRepository
+from .. import sql_models as models
+from datetime import timedelta, datetime, timezone
 
 
 class AnalysisRepository(BaseRepository):
-    def create(self, user_id: int, filename: str, status: models.AnalysisStatus = models.AnalysisStatus.PENDING, source_file_path: str = "", prompt: Optional[str] = None) -> models.Analysis:
+    async def create(
+        self,
+        user_id: int,
+        filename: str,
+        status: models.AnalysisStatus = models.AnalysisStatus.PENDING,
+        source_blob_name: str = "",
+    ) -> models.Analysis:
         analysis = models.Analysis(
             user_id=user_id,
             filename=filename,
             status=status,
-            source_file_path=source_file_path,
-            prompt=prompt,
+            source_blob_name=source_blob_name,
         )
         self.db.add(analysis)
-        self.db.commit()
-        self.db.refresh(analysis)
+        await self.db.commit()
+        await self.db.refresh(analysis)
         return analysis
 
-    def update_filename(self, analysis_id: str, new_filename: str) -> Optional[models.Analysis]:
-        analysis = self.get_by_id(analysis_id)
+    async def update_filename(
+        self, analysis_id: str, new_filename: str
+    ) -> Optional[models.Analysis]:
+        analysis = await self.get_by_id(analysis_id)
         if not analysis:
             return None
         analysis.filename = new_filename
-        self.db.commit()
-        self.db.refresh(analysis)
+        await self.db.commit()
+        await self.db.refresh(analysis)
         return analysis
 
-    def delete(self, analysis_id: str) -> None:
-        analysis = self.get_by_id(analysis_id)
+    async def delete(self, analysis_id: str) -> None:
+        analysis = await self.get_by_id(analysis_id)
         if not analysis:
             return
-        self.db.delete(analysis)
-        self.db.commit()
+        await self.db.delete(analysis)
+        await self.db.commit()
 
-    def get_by_id(self, analysis_id: str) -> Optional[models.Analysis]:
-        return (
-            self.db.query(models.Analysis)
-            .filter(models.Analysis.id == analysis_id)
-            .first()
+    async def get_by_id(self, analysis_id: str) -> Optional[models.Analysis]:
+        result = await self.db.execute(
+            select(models.Analysis).where(models.Analysis.id == analysis_id)
         )
+        return result.scalar_one_or_none()
 
-    def get_detailed_by_id(self, analysis_id: str) -> Optional[models.Analysis]:
-        return (
-            self.db.query(models.Analysis)
-            .options(joinedload(models.Analysis.versions))
-            .filter(models.Analysis.id == analysis_id)
-            .first()
+    async def get_detailed_by_id(self, analysis_id: str) -> Optional[models.Analysis]:
+        stmt = (
+            select(models.Analysis)
+            .options(
+                joinedload(models.Analysis.versions).joinedload(
+                    models.AnalysisVersion.steps
+                )
+            )
+            .where(models.Analysis.id == analysis_id)
         )
+        result = await self.db.execute(stmt)
+        return result.unique().scalar_one_or_none()
 
-    def list_by_user(self, user_id: int, skip: int = 0, limit: int = 100) -> List[models.Analysis]:
-        return (
-            self.db.query(models.Analysis)
-            .filter(models.Analysis.user_id == user_id)
+    async def list_by_user(
+        self, user_id: int, skip: int = 0, limit: int = 100
+    ) -> List[models.Analysis]:
+        stmt = (
+            select(models.Analysis)
+            .where(models.Analysis.user_id == user_id)
             .order_by(models.Analysis.created_at.desc())
             .offset(skip)
             .limit(limit)
-            .all()
         )
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
 
-    def count_by_user(self, user_id: int) -> int:
-        return (
-            self.db.query(models.Analysis)
-            .filter(models.Analysis.user_id == user_id)
-            .count()
+    async def count_by_user(self, user_id: int) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(models.Analysis)
+            .where(models.Analysis.user_id == user_id)
         )
+        result = await self.db.execute(stmt)
+        return result.scalar_one()
 
-    def update_paths_and_status(self, analysis_id: str, *, status: Optional[models.AnalysisStatus] = None, result_path: Optional[str] = None, transcript_path: Optional[str] = None) -> None:
-        analysis = self.get_by_id(analysis_id)
+    async def update_paths_and_status(
+        self,
+        analysis_id: str,
+        *,
+        status: Optional[models.AnalysisStatus] = None,
+        result_blob_name: Optional[str] = None,
+        transcript_blob_name: Optional[str] = None,
+        transcript_snippet: Optional[str] = None,
+        analysis_snippet: Optional[str] = None,
+    ) -> None:
+        analysis = await self.get_by_id(analysis_id)
         if not analysis:
             return
         if status is not None:
             analysis.status = status
-        if result_path is not None:
-            analysis.result_path = result_path
-        if transcript_path is not None:
-            analysis.transcript_path = transcript_path
-        self.db.commit()
+        if result_blob_name is not None:
+            analysis.result_blob_name = result_blob_name
+        if transcript_blob_name is not None:
+            analysis.transcript_blob_name = transcript_blob_name
+        if transcript_snippet is not None:
+            analysis.transcript_snippet = transcript_snippet
+        if analysis_snippet is not None:
+            analysis.analysis_snippet = analysis_snippet
+        await self.db.commit()
 
-    def update_status(self, analysis_id: str, status: models.AnalysisStatus) -> None:
-        self.update_paths_and_status(analysis_id, status=status)
+    async def update_status(
+        self, analysis_id: str, status: models.AnalysisStatus
+    ) -> None:
+        await self.update_paths_and_status(analysis_id, status=status)
 
-    def update_progress(self, analysis_id: str, progress: int) -> None:
-        analysis = self.get_by_id(analysis_id)
+    async def update_progress(self, analysis_id: str, progress: int) -> None:
+        analysis = await self.get_by_id(analysis_id)
         if not analysis:
             return
         analysis.progress = max(0, min(100, int(progress)))
-        self.db.commit()
+        await self.db.commit()
 
-    def add_version(self, analysis_id: str, prompt_used: str, result_path: str, people_involved: Optional[str] = None) -> models.AnalysisVersion:
+    async def add_version(
+        self,
+        analysis_id: str,
+        prompt_used: str,
+        result_blob_name: Optional[str] = None,
+        people_involved: Optional[str] = None,
+        structured_plan: Optional[dict] = None,
+    ) -> models.AnalysisVersion:
         version = models.AnalysisVersion(
             analysis_id=analysis_id,
             prompt_used=prompt_used,
-            result_path=result_path,
+            result_blob_name=result_blob_name,
             people_involved=people_involved,
+            structured_plan=structured_plan,
         )
         self.db.add(version)
-        self.db.commit()
-        self.db.refresh(version)
+        await self.db.commit()
+        await self.db.refresh(version)
         return version
 
-    def get_version_by_id(self, version_id: str) -> Optional[models.AnalysisVersion]:
-        return (
-            self.db.query(models.AnalysisVersion)
-            .filter(models.AnalysisVersion.id == version_id)
-            .first()
+    async def get_version_by_id(
+        self, version_id: str
+    ) -> Optional[models.AnalysisVersion]:
+        result = await self.db.execute(
+            select(models.AnalysisVersion).where(
+                models.AnalysisVersion.id == version_id
+            )
         )
+        return result.scalar_one_or_none()
+
+    async def get_step_result_by_id(
+        self, step_result_id: str
+    ) -> Optional[models.AnalysisStepResult]:
+        result = await self.db.execute(
+            select(models.AnalysisStepResult).where(
+                models.AnalysisStepResult.id == step_result_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_step_result_with_analysis_owner(
+        self, step_result_id: str
+    ) -> Optional[models.AnalysisStepResult]:
+        stmt = (
+            select(models.AnalysisStepResult)
+            .options(
+                joinedload(models.AnalysisStepResult.version).joinedload(
+                    models.AnalysisVersion.analysis_record
+                )
+            )
+            .where(models.AnalysisStepResult.id == step_result_id)
+        )
+        result = await self.db.execute(stmt)
+        return result.unique().scalar_one_or_none()
+
+    async def get_step_result_with_full_context(
+        self, step_result_id: str
+    ) -> Optional[models.AnalysisStepResult]:
+        stmt = (
+            select(models.AnalysisStepResult)
+            .options(
+                # Étape 1: On charge la relation "version" depuis AnalysisStepResult
+                joinedload(models.AnalysisStepResult.version).options(
+                    # Étape 2: Depuis "version", on charge deux chemins différents
+                    # Chemin A: On charge l'enregistrement d'analyse principal et son prompt flow
+                    joinedload(models.AnalysisVersion.analysis_record)
+                    .joinedload(models.Analysis.prompt_flow)
+                    .joinedload(models.PromptFlow.steps),
+                    # Chemin B: On charge tous les "steps" (résultats d'étapes) associés à cette version
+                    # On utilise selectinload car c'est une relation "one-to-many"
+                    selectinload(models.AnalysisVersion.steps),
+                )
+            )
+            .where(models.AnalysisStepResult.id == step_result_id)
+        )
+        result = await self.db.execute(stmt)
+        return result.unique().scalar_one_or_none()
+
+    async def get_in_progress_transcriptions(self) -> List[models.Analysis]:
+        """
+        Récupère toutes les analyses dont la transcription est en cours.
+        
+        Returns:
+            Liste des analyses avec le statut TRANSCRIPTION_IN_PROGRESS
+        """
+        stmt = select(models.Analysis).where(
+            models.Analysis.status == models.AnalysisStatus.TRANSCRIPTION_IN_PROGRESS
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
+
+    async def find_stale_in_progress_analyses(
+        self, timeout_delta: timedelta
+    ) -> List[models.Analysis]:
+        """
+        Trouve les analyses dont la transcription est bloquée (en cours depuis trop longtemps).
+        
+        Args:
+            timeout_delta: Le délai après lequel une transcription est considérée comme bloquée
+            
+        Returns:
+            Liste des analyses dont la transcription est bloquée
+        """
+        cutoff_time = datetime.now(timezone.utc) - timeout_delta
+        stmt = select(models.Analysis).where(
+            models.Analysis.status == models.AnalysisStatus.TRANSCRIPTION_IN_PROGRESS,
+            models.Analysis.created_at < cutoff_time,
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().all()

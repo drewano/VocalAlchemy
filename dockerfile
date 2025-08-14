@@ -30,18 +30,32 @@ ENV PYTHONUNBUFFERED 1
 
 # Installation des dépendances système.
 # ffmpeg est requis par pydub pour traiter les fichiers audio.
+# Packages additionnels requis par le SDK Azure Speech (SSL, ALSA, GStreamer pour I/O audio).
+# pandoc est requis par pypandoc pour la conversion Markdown vers Word.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libasound2 \
+        ca-certificates \
+        libssl3 \
+        gstreamer1.0-alsa \
+        gstreamer1.0-libav \
+        gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good \
+        pandoc \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Définition du répertoire de travail dans l'image finale
 WORKDIR /app
 
-# Copie et installation des dépendances Python
-# On copie uniquement requirements.txt d'abord pour le cache Docker.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Installation de l'outil uv pour la gestion des dépendances Python
+RUN pip install uv
+
+# Copie et installation des dépendances Python avec uv
+# On copie uniquement pyproject.toml d'abord pour le cache Docker.
+COPY pyproject.toml .
+RUN uv pip install --system --no-cache .
 
 # Copie du code source du backend
 # On copie le dossier `src` du backend vers le dossier `/app/src` de l'image.
@@ -53,14 +67,9 @@ COPY backend/src ./src
 # Votre `main.py` est configuré pour servir les fichiers de ce dossier.
 COPY --from=frontend-builder /app/frontend/dist /app/static
 
-# Création du répertoire 'uploads' que l'application utilise pour stocker les fichiers temporaires.
-# L'application aura les droits pour écrire dans ce dossier à l'intérieur du conteneur.
-RUN mkdir uploads
-
 # Exposition du port sur lequel FastAPI va écouter.
 EXPOSE 8000
 
-# Commande pour démarrer l'application avec Uvicorn.
-# --host 0.0.0.0 est nécessaire pour que le serveur soit accessible depuis l'extérieur du conteneur.
-# Les variables d'environnement (clés API, etc.) seront injectées à l'exécution.
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Utilisation de Gunicorn comme serveur de production avec des workers Uvicorn pour la compatibilité ASGI
+# Commande pour démarrer l'application avec Gunicorn.
+CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000", "src.main:app"]

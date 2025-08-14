@@ -97,12 +97,12 @@ export function LoginForm({
               
               {type === "login" && (
                 <div className="flex items-center">
-                  <a
-                    href="#"
+                  <Link
+                    to="/forgot-password"
                     className="ml-auto text-sm underline-offset-2 hover:underline"
                   >
                     Forgot your password?
-                  </a>
+                  </Link>
                 </div>
               )}
               

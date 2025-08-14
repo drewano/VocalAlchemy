@@ -1,24 +1,50 @@
-
-import os
-import uuid
-from datetime import timedelta
-from fastapi import FastAPI, HTTPException, APIRouter, Depends, File, UploadFile, BackgroundTasks, Form
+from fastapi import (
+    FastAPI,
+    APIRouter,
+    Request,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles 
-from src.services.prompts import PREDEFINED_PROMPTS
+from fastapi.responses import PlainTextResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+import os
+
 from src.api.endpoints import users, analysis
-from src.api.endpoints import user_prompts as user_prompts
+from src.api.endpoints import prompt_flows as prompt_flows
+from src.api.endpoints import admin
+from src.api.endpoints import setup
 
-from src.infrastructure.database import engine
-from src.infrastructure import sql_models as models
+import logging
+import litellm
+from src.config import settings
+from src.rate_limiter import limiter
+from slowapi.errors import RateLimitExceeded
 
-models.Base.metadata.create_all(bind=engine)
+
+# Configuration centralisée du logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - [%(name)s] - %(message)s",
+    force=True,
+)
+
+# Active le mode verbeux de LiteLLM si activé dans la configuration
+if settings.LITELLM_DEBUG:
+    litellm.set_verbose = True
+    logging.info("LiteLLM verbose mode is enabled.")
 
 app = FastAPI(title="POC Audio Analysis Pipeline")
 
+# Add rate limiter to app state
+app.state.limiter = limiter
+
+# Add exception handler for rate limiting
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request, exc):
+    return PlainTextResponse(str(exc), status_code=429)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=settings.get_cors_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -26,26 +52,26 @@ app.add_middleware(
 
 # Utiliser un APIRouter et include_router, puis le monter avec prefix /api
 api_router = APIRouter()
-api_router.include_router(users.router, prefix="/users", tags=["users"]) 
-api_router.include_router(analysis.router, prefix="/analysis", tags=["analysis"]) 
-api_router.include_router(user_prompts.router, prefix="/user-prompts", tags=["user-prompts"])
+api_router.include_router(users.router, prefix="/users", tags=["users"])
+api_router.include_router(analysis.router, prefix="/analysis", tags=["analysis"])
+api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_router.include_router(setup.router, prefix="/setup", tags=["setup"])
 
-from src.infrastructure.database import get_db
-from src.infrastructure.repositories.user_prompt_repository import UserPromptRepository
-from src import auth
-
-
-@api_router.get("/prompts")
-async def get_prompts(db=Depends(get_db), user=Depends(auth.get_current_user)):
-    repo = UserPromptRepository(db)
-    user_prompts = repo.list_by_user(user.id)
-
-    # Merge: user prompts override predefined on name conflicts
-    merged: dict[str, str] = {**PREDEFINED_PROMPTS}
-    for p in user_prompts:
-        merged[p.name] = p.content
-    return merged
+api_router.include_router(
+    prompt_flows.router, prefix="/prompt-flows", tags=["prompt-flows"]
+)
 
 app.include_router(api_router, prefix="/api")
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# Route pour servir les fichiers statiques et gérer le routing React
+@app.get("/{full_path:path}", response_class=FileResponse)
+async def serve_react_app(request: Request, full_path: str):
+    # Chemin vers le fichier statique demandé
+    static_file_path = os.path.join("static", full_path)
+    
+    # Si le fichier existe, le servir directement
+    if os.path.isfile(static_file_path):
+        return FileResponse(static_file_path)
+    
+    # Pour toutes les autres routes (y compris les routes React), servir index.html
+    return FileResponse("static/index.html")

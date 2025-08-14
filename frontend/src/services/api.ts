@@ -1,10 +1,12 @@
 import axios from 'axios'
-import type { PredefinedPrompts, AnalysisDetail, AnalysisListResponse } from '@/types'
+import type { AnalysisDetail, AnalysisListResponse, AdminUserView } from '@/types'
 
 // Types locaux alignés avec AuthContext
 interface User {
   id: number;
   email: string;
+  is_admin: boolean;
+  status: string;
 }
 
 type LoginResponse = { access_token: string; token_type: string; user: User }
@@ -44,55 +46,80 @@ api.interceptors.response.use(
 
 export { api }
 
-/**
- * Récupère les prompts prédéfinis depuis le backend
- * @returns Un objet contenant les prompts prédéfinis
- */
-export async function getPrompts(): Promise<PredefinedPrompts> {
-  const response = await api.get('/prompts')
+// Setup functions
+export async function getSetupStatus(): Promise<{ admin_exists: boolean }> {
+  const response = await api.get('/setup/status')
+  return response.data
+}
+
+export async function createFirstAdmin(email: string, password: string): Promise<User> {
+  const response = await api.post('/setup/create-admin', { email, password })
+  return response.data
+}
+
+// Admin functions
+export async function listAdminUsers(): Promise<AdminUserView[]> {
+  const response = await api.get('/admin/users')
+  return response.data.users
+}
+
+export async function approveUser(userId: number): Promise<User> {
+  const response = await api.post(`/admin/users/${userId}/approve`)
+  return response.data
+}
+
+export async function rejectUser(userId: number): Promise<User> {
+  const response = await api.post(`/admin/users/${userId}/reject`)
+  return response.data
+}
+
+export async function createAdminUser(email: string, password: string): Promise<User> {
+  const response = await api.post('/admin/users', { email, password })
   return response.data
 }
 
 /**
- * Envoie un fichier audio pour traitement avec un prompt spécifique
- * @param file Le fichier audio à traiter
- * @param prompt Le prompt à utiliser pour l'analyse
- * @returns Un objet contenant l'ID de la tâche
+ * Initie un upload de fichier audio en deux étapes
+ * @param filename Le nom du fichier à uploader
+ * @param filesize La taille du fichier en octets
+ * @returns Un objet contenant l'URL SAS, le nom du blob et l'ID de l'analyse
  */
-export async function processAudio(file: File, prompt: string): Promise<{ analysis_id: string }> {
-  const formData = new FormData()
-  formData.append('file', file)
-  formData.append('prompt', prompt)
+export async function initiateUpload(filename: string, filesize: number): Promise<{ sasUrl: string, blobName: string, analysisId: string }> {
+  const response = await api.post('/analysis/initiate-upload/', { filename, filesize })
+  return {
+    sasUrl: response.data.sas_url,
+    blobName: response.data.blob_name,
+    analysisId: response.data.analysis_id
+  }
+}
 
-  const response = await api.post('/analysis/process-audio/', formData, {
+/**
+ * Upload un fichier directement vers Azure Blob Storage via URL SAS
+ * @param sasUrl L'URL SAS pour l'upload
+ * @param file Le fichier à uploader
+ */
+export async function uploadFileToSasUrl(sasUrl: string, file: File): Promise<void> {
+  await axios.put(sasUrl, file, {
     headers: {
-      'Content-Type': 'multipart/form-data',
+      'x-ms-blob-type': 'BlockBlob',
+      'Content-Type': file.type || 'application/octet-stream',
     },
   })
-
-  return response.data
 }
 
 /**
- * Récupère le statut d'une tâche de traitement
- * @param taskId L'ID de la tâche à vérifier
- * @returns Un objet contenant le statut de la tâche
+ * Finalise l'upload et démarre le traitement
+ * @param analysisId L'ID de l'analyse créée lors de l'initiation
+ * @param prompt Le prompt à utiliser pour l'analyse
  */
-export async function getTaskStatus(analysisId: string): Promise<{ status: string; has_result: boolean; has_transcript: boolean }> {
-  const response = await api.get(`/analysis/status/${analysisId}`)
-  return response.data
+export async function finalizeUpload(analysisId: string, promptFlowId: string): Promise<void> {
+  await api.post('/analysis/finalize-upload/', {
+    analysis_id: analysisId,
+    prompt_flow_id: promptFlowId,
+  })
 }
 
-/**
- * Récupère le fichier résultat ou transcription d'une tâche terminée
- * @param taskId L'ID de la tâche
- * @param type Le type de fichier à récupérer ('result' ou 'transcript')
- * @returns Le contenu du fichier texte
- */
-export async function getResultFile(analysisId: string, type: 'result' | 'transcript'): Promise<string> {
-  const response = await api.get(`/analysis/${type}/${analysisId}`, { responseType: 'text' })
-  return response.data
-}
+
 
 export async function listAnalyses({ page, pageSize }: { page: number; pageSize: number }): Promise<AnalysisListResponse> {
   const skip = Math.max(0, (page - 1) * pageSize)
@@ -106,15 +133,18 @@ export async function getAnalysisDetail(taskId: string): Promise<AnalysisDetail>
   return res.data
 }
 
-export async function rerunAnalysis(analysisId: string, prompt: string): Promise<any> {
-  const formData = new FormData()
-  formData.append('prompt', prompt)
-  const res = await api.post(`/analysis/rerun/${analysisId}`, formData)
-  return res.data
+export async function updateTranscript(analysisId: string, content: string): Promise<void> {
+  await api.put(`/analysis/${analysisId}/transcript`, { content })
 }
 
-export async function getVersionResult(versionId: string): Promise<string> {
-  const res = await api.get(`/result/version/${versionId}`, { responseType: 'text' })
+export async function updateStepResult(stepResultId: string, content: string): Promise<void> {
+  await api.put(`/analysis/step-result/${stepResultId}`, { content })
+}
+
+export async function rerunAnalysis(analysisId: string, promptFlowId: string): Promise<any> {
+  const res = await api.post(`/analysis/rerun/${analysisId}`, {
+    prompt_flow_id: promptFlowId,
+  })
   return res.data
 }
 
@@ -122,19 +152,49 @@ export async function deleteAnalysis(analysisId: string): Promise<void> {
   await api.delete(`/analysis/${analysisId}`)
 }
 
+
+
 export async function renameAnalysis(analysisId: string, newName: string): Promise<void> {
   await api.patch(`/analysis/${analysisId}/rename`, { filename: newName })
 }
 
-// Fonction utilitaire pour construire l'URL du fichier audio (aucun appel axios)
-export function getAudioFileUrl(analysisId: string): string {
-  return `/api/analysis/audio/${analysisId}`
+/**
+ * Relance uniquement la transcription d'une analyse
+ * @param analysisId L'ID de l'analyse à retranscrire
+ */
+export async function relaunchTranscription(analysisId: string): Promise<void> {
+  await api.post(`/analysis/${analysisId}/retranscribe`)
 }
 
-// Récupère le fichier audio (authentifié) en tant que Blob
-export async function getAudioFileBlob(analysisId: string): Promise<Blob> {
-  const res = await api.get(`/analysis/audio/${analysisId}`, { responseType: 'blob' })
-  return res.data
+/**
+ * Relance une seule étape de l'analyse IA
+ * @param stepResultId L'ID du résultat d'étape à relancer
+ * @param newPromptContent Le nouveau contenu du prompt (optionnel)
+ */
+export async function relaunchAnalysisStep(stepResultId: string, newPromptContent?: string): Promise<void> {
+  await api.post(`/analysis/step-result/${stepResultId}/rerun`, {
+    new_prompt_content: newPromptContent
+  })
+}
+
+/**
+ * Télécharge un document Word contenant la transcription ou l'assemblage des résultats
+ * @param analysisId L'ID de l'analyse
+ * @param type Le type de document à télécharger ('transcription' ou 'assembly')
+ * @returns Un Blob contenant le document Word
+ */
+export async function downloadWordDocument(analysisId: string, type: 'transcription' | 'assembly'): Promise<Blob> {
+  const response = await api.get(`/analysis/${analysisId}/download-word`, {
+    params: { type },
+    responseType: 'blob'
+  })
+  return response.data
+}
+
+// Récupère une URL SAS pour le fichier audio original
+export async function getAudioFileSasUrl(analysisId: string): Promise<string> {
+  const res = await api.get(`/analysis/audio/${analysisId}`)
+  return res.data.url
 }
 
 // User prompts CRUD moved to prompts.api.ts
@@ -152,15 +212,11 @@ export async function getMe(): Promise<User> {
  * @returns Objet contenant token, type et user
  */
 export async function login(email: string, password: string): Promise<LoginResponse> {
-  const formData = new FormData()
-  formData.append('username', email) // Le backend attend 'username' pour l'email
-  formData.append('password', password)
+  const params = new URLSearchParams()
+  params.append('username', email) // Le backend attend 'username' pour l'email
+  params.append('password', password)
 
-  const response = await api.post('/users/token', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  })
+  const response = await api.post('/users/token', params)
 
   return response.data
 }
@@ -169,9 +225,9 @@ export async function login(email: string, password: string): Promise<LoginRespo
  * Inscrit un nouvel utilisateur
  * @param email L'email de l'utilisateur
  * @param password Le mot de passe de l'utilisateur
- * @returns Un objet contenant le token d'accès
+ * @returns Un objet contenant les informations de l'utilisateur créé
  */
-export async function signup(email: string, password: string): Promise<{ access_token: string }> {
+export async function signup(email: string, password: string): Promise<User> {
   const response = await api.post('/users/register', { email, password })
   return response.data
 }
