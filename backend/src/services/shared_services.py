@@ -1,5 +1,7 @@
 from functools import lru_cache
 
+import httpx
+
 from src.config import settings
 from src.services.blob_storage_service import BlobStorageService
 from src.services.external_apis.azure_speech_client import AzureSpeechClient
@@ -19,8 +21,15 @@ def get_transcriber(blob_storage_service: BlobStorageService) -> AzureSpeechClie
         api_key=settings.AZURE_SPEECH_KEY,
         region=settings.AZURE_SPEECH_REGION,
         blob_storage_service=blob_storage_service,
+        http_client=get_http_client(),
     )
 
 
 def get_ai_analyzer() -> LiteLLMAIProcessor:
     return LiteLLMAIProcessor(model_name=settings.AZURE_AI_MODEL_NAME)
+
+
+@lru_cache()
+def get_http_client() -> httpx.AsyncClient:
+    transport = httpx.AsyncHTTPTransport(retries=3)
+    return httpx.AsyncClient(transport=transport)

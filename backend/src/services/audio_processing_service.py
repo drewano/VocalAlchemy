@@ -20,7 +20,7 @@ class AudioProcessingService:
         Synchronous method to handle blocking file operations for audio conversion.
         """
         source_temp = tempfile.NamedTemporaryFile(delete=False)
-        output_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+        output_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".flac")
         source_path = source_temp.name
         output_path = output_temp.name
         # Close immediately so we can reopen on Windows
@@ -36,7 +36,7 @@ class AudioProcessingService:
             try:
                 sound = AudioSegment.from_file(source_path)
                 sound = sound.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-                sound.export(output_path, format="wav")
+                sound.export(output_path, format="flac")
             except Exception as e:
                 raise FFmpegError(f"Audio conversion failed with pydub: {e}") from e
 
@@ -61,7 +61,7 @@ class AudioProcessingService:
     ) -> None:
         """
         Normalize audio using pydub with temporary files.
-        Converts audio to WAV (PCM s16le) 16kHz mono format.
+        Converts audio to FLAC 16kHz mono format.
         """
         # Download source blob to bytes
         source_data = await self.blob_storage_service.download_blob_as_bytes(

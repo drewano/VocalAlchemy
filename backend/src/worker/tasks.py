@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Optional
 import json
 from src.infrastructure.sql_models import AnalysisStatus
+from src.services.exceptions import ExternalAPIError
 from src.worker.dependencies import (
     get_analysis_service_provider,
     get_analysis_repository_provider,
@@ -45,6 +46,10 @@ async def start_transcription_task(ctx, analysis_id: str) -> None:
                 analysis_id,
                 _defer_by=timedelta(seconds=30),
             )
+        except ExternalAPIError as e:
+            error_details = f"Network error during transcription submission for analysis {analysis_id}: {e}. ARQ will retry."
+            logging.warning(error_details)
+            raise
         except Exception as e:
             error_details = f"Transcription submission failed. Error type: {type(e).__name__}. Details: {e}"
             logging.error(error_details)

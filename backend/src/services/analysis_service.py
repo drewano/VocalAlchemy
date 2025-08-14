@@ -93,10 +93,10 @@ class AnalysisService:
             analysis_id, AnalysisStatus.TRANSCRIPTION_IN_PROGRESS
         )
 
-        # Génération d'un nom de blob unique pour le fichier normalisé (WAV PCM 16k mono)
-        normalized_blob_name = f"{analysis.user_id}/{analysis_id}/normalized.wav"
+        # Génération d'un nom de blob unique pour le fichier normalisé (FLAC 16kHz mono)
+        normalized_blob_name = f"{analysis.user_id}/{analysis_id}/normalized.flac"
 
-        # Normalisation audio en streaming avec ffmpeg (FLAC 16kHz mono 16-bit)
+        # Normalisation audio en streaming vers le format FLAC
         try:
             await self.audio_processing_service.normalize_audio(
                 analysis.source_blob_name, normalized_blob_name
@@ -144,17 +144,25 @@ class AnalysisService:
         if analysis.user_id != user_id:
             raise PermissionError("Access denied")
 
+        # Construire la liste complète des noms de blobs à supprimer
         blob_names: list[str] = []
-        if getattr(analysis, "source_blob_name", None):
+        
+        # Ajouter les blobs de l'analyse principale
+        if analysis.source_blob_name:
             blob_names.append(analysis.source_blob_name)
-        if getattr(analysis, "normalized_blob_name", None):
+        if analysis.normalized_blob_name:
             blob_names.append(analysis.normalized_blob_name)
-        if getattr(analysis, "transcript_blob_name", None):
+        if analysis.transcript_blob_name:
             blob_names.append(analysis.transcript_blob_name)
-        for v in getattr(analysis, "versions", []) or []:
-            if getattr(v, "result_blob_name", None):
+        if analysis.result_blob_name:
+            blob_names.append(analysis.result_blob_name)
+            
+        # Ajouter les blobs des versions d'analyse
+        for v in analysis.versions or []:
+            if v.result_blob_name:
                 blob_names.append(v.result_blob_name)
 
+        # Supprimer tous les blobs identifiés
         for name in blob_names:
             try:
                 await self.blob_storage_service.delete_blob(name)

@@ -4,7 +4,7 @@ import uuid
 from typing import Dict, List, Optional
 
 import httpx
-from httpx import ConnectError
+from src.services.exceptions import ExternalAPIError
 from src.services.blob_storage_service import BlobStorageService
 
 
@@ -14,6 +14,7 @@ class AzureSpeechClient:
         api_key: str,
         region: str,
         blob_storage_service: BlobStorageService,
+        http_client: httpx.AsyncClient,
     ) -> None:
         # Validate inputs
         if not api_key or not isinstance(api_key, str):
@@ -30,7 +31,7 @@ class AzureSpeechClient:
         self._speech_base_url = (
             f"https://{self.region}.api.cognitive.microsoft.com/speechtotext/v3.1"
         )
-        self._http_client = httpx.AsyncClient()
+        self._http_client = http_client
 
     async def submit_batch_transcription(
         self, audio_sas_url: str, original_filename: str
@@ -76,19 +77,19 @@ class AzureSpeechClient:
             resp = await self._http_client.post(
                 url, headers=headers, data=json.dumps(payload), timeout=30
             )
-        except ConnectError as e:
-            raise RuntimeError(
-                f"Erreur de connexion réseau en tentant de soumettre la transcription: {e}"
+        except httpx.RequestError as e:
+            raise ExternalAPIError(
+                f"Erreur réseau en tentant de soumettre la transcription: {e}"
             ) from e
 
         if resp.status_code not in [201, 202]:
-            raise RuntimeError(
+            raise ExternalAPIError(
                 f"Failed to submit transcription. Expected status 201 or 202, but got {resp.status_code}. Body: {resp.text}"
             )
 
         location = resp.headers.get("Location")
         if not location:
-            raise RuntimeError(
+            raise ExternalAPIError(
                 "Missing Location header on response from transcription submit"
             )
         return location
@@ -99,12 +100,12 @@ class AzureSpeechClient:
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
         try:
             resp = await self._http_client.get(status_url, headers=headers, timeout=30)
-        except ConnectError as e:
-            raise RuntimeError(
-                f"Erreur de connexion réseau en tentant de vérifier le statut sur {status_url}: {e}"
+        except httpx.RequestError as e:
+            raise ExternalAPIError(
+                f"Erreur réseau en tentant de vérifier le statut sur {status_url}: {e}"
             ) from e
         if resp.status_code != 200:
-            raise RuntimeError(
+            raise ExternalAPIError(
                 f"Failed to get transcription status. status={resp.status_code}, body={resp.text}"
             )
         return resp.json()
@@ -116,12 +117,12 @@ class AzureSpeechClient:
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
         try:
             resp = await self._http_client.get(url, headers=headers, timeout=30)
-        except ConnectError as e:
-            raise RuntimeError(
-                f"Erreur de connexion réseau en tentant de récupérer les fichiers de transcription depuis {url}: {e}"
+        except httpx.RequestError as e:
+            raise ExternalAPIError(
+                f"Erreur réseau en tentant de récupérer les fichiers de transcription depuis {url}: {e}"
             ) from e
         if resp.status_code != 200:
-            raise RuntimeError(
+            raise ExternalAPIError(
                 f"Failed to get transcription files. status={resp.status_code}, body={resp.text}"
             )
         return resp.json()
@@ -145,17 +146,17 @@ class AzureSpeechClient:
                     break
 
         if not result_url:
-            raise RuntimeError("No Transcription result file found in files response")
+            raise ExternalAPIError("No Transcription result file found in files response")
 
         # Download the result JSON
         try:
             result_resp = await self._http_client.get(result_url, timeout=60)
-        except ConnectError as e:
-            raise RuntimeError(
-                f"Erreur de connexion réseau en tentant de télécharger le résultat de transcription depuis {result_url}: {e}"
+        except httpx.RequestError as e:
+            raise ExternalAPIError(
+                f"Erreur réseau en tentant de télécharger le résultat de transcription depuis {result_url}: {e}"
             ) from e
         if result_resp.status_code != 200:
-            raise RuntimeError(
+            raise ExternalAPIError(
                 f"Failed to download result JSON. status={result_resp.status_code}, body={result_resp.text}"
             )
         result_json = result_resp.json()
